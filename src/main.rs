@@ -1,7 +1,7 @@
 // Written in 2025 by Joshua Doman <joshsdoman@gmail.com>
 // SPDX-License-Identifier: CC0-1.0
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use clap::{Args, Parser, Subcommand};
 use std::str::FromStr;
@@ -85,10 +85,6 @@ fn handle_decrypt(args: DecryptArgs) -> Result<()> {
     let data_bytes = BASE64_STANDARD
         .decode(&args.data)
         .context("Failed to decode Base64 data for encrypted payload")?;
-
-    if args.pks.is_empty() {
-        bail!("At least one public key must be provided for decryption.");
-    }
 
     let mut pks = Vec::new();
     for pk_str in args.pks {

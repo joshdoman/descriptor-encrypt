@@ -1,12 +1,105 @@
 // Written in 2025 by Joshua Doman <joshsdoman@gmail.com>
 // SPDX-License-Identifier: CC0-1.0
 
-//! Descriptor Encrypt
+//! # Descriptor Encrypt
+//!
+//! A cryptographic system that encrypts Bitcoin wallet descriptors such that only those 
+//! who can spend the funds can recover the descriptor.
 //!
 //! ## Overview
-//! This project implements a system that lets any Bitcoin wallet descriptor 
-//! be efficiently encrypted such that only a set of keys that can spend the
-//! funds can recover the descriptor.
+//!
+//! Bitcoin wallet descriptors encode the spending conditions for Bitcoin outputs, including 
+//! keys, scripts, and other requirements. While descriptors are powerful tools for representing 
+//! wallet structures, securely backing them up presents a challenge - especially for 
+//! multi-signature and complex script setups.
+//!
+//! This library implements a cryptographic system that allows any Bitcoin wallet descriptor to be 
+//! encrypted with a security model that directly mirrors the descriptor's spending conditions:
+//!
+//! - If your wallet requires 2-of-3 keys to spend, it will require exactly 2-of-3 keys to decrypt
+//! - If your wallet uses a complex miniscript policy like "Either 2 keys OR (a timelock AND another key)",
+//!   the encryption follows this same logical structure
+//!
+//! ## How It Works
+//!
+//! The encryption mechanism works through several key innovations:
+//!
+//! 1. **Security Mirroring**: The descriptor's spending policy is analyzed and transformed into an
+//!    equivalent encryption policy
+//! 2. **Recursive Secret Sharing**: Shamir's Secret Sharing is applied recursively to split
+//!    encryption keys following the script's threshold requirements
+//! 3. **Per-Key Encryption**: Each share is encrypted with the corresponding public key from
+//!    the descriptor, ensuring only key holders can access them
+//! 4. **Template-Based Structure**: The descriptor's structure is preserved in an encrypted form,
+//!    allowing selective disclosure of information
+//!
+//! ## Examples
+//!
+//! ### Encrypting a Descriptor
+//!
+//! ```rust
+//! use std::str::FromStr;
+//! use descriptor_encrypt::{encrypt, decrypt};
+//! use miniscript::Descriptor;
+//! use miniscript::descriptor::DescriptorPublicKey;
+//!
+//! // Create a descriptor - a 2-of-3 multisig in this example
+//! let desc_str = "wsh(multi(2,\
+//!     03a0434d9e47f3c86235477c7b1ae6ae5d3442d49b1943c2b752a68e2a47e247c7,\
+//!     036d2b085e9e382ed10b69fc311a03f8641ccfff21574de0927513a49d9a688a00,\
+//!     02e8445082a72f29b75ca48748a914df60622a609cacfce8ed0e35804560741d29\
+//! ))";
+//! let descriptor = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
+//!
+//! // Encrypt the descriptor
+//! let encrypted_data = encrypt(descriptor.clone()).unwrap();
+//!
+//! // Later, decrypt with the keys (in this example, only the first two keys are provided, 
+//! // which is sufficient for a 2-of-3 multisig)
+//! let keys = descriptor.to_node().extract_keys();
+//! let first_two_keys = vec![keys[0].clone(), keys[1].clone()];
+//!
+//! // Recover the original descriptor
+//! let recovered_descriptor = decrypt(&encrypted_data, first_two_keys).unwrap();
+//! assert_eq!(descriptor.to_string(), recovered_descriptor.to_string());
+//! ```
+//!
+//! ### Using Templates and Derivation Paths
+//!
+//! ```rust
+//! use descriptor_encrypt::{encrypt, get_template, get_origin_derivation_paths};
+//! // (imports and setup as in previous example)
+//! 
+//! let encrypted_data = encrypt(descriptor.clone()).unwrap();
+//!
+//! // Get a template descriptor with dummy keys (useful for analysis without revealing actual keys)
+//! let template = get_template(&encrypted_data).unwrap();
+//! 
+//! // Extract only the derivation paths (useful for watch-only wallets)
+//! let paths = get_origin_derivation_paths(&encrypted_data).unwrap();
+//! ```
+//!
+//! ## Supported Descriptor Types
+//!
+//! The library supports all standard Bitcoin descriptor types:
+//!
+//! - Single-signature (`pkh`, `wpkh`, `tr` with internal key)
+//! - Multi-signature (`sh(multi)`, `wsh(multi)`, `sh(wsh(multi))`, etc.)
+//! - Taproot (`tr` with script trees)
+//! - Full Miniscript expressions (all logical operations, timelocks, hashlocks, etc.)
+//! - Nested combinations of the above
+//!
+//! ## Security Considerations
+//!
+//! This library ensures:
+//!
+//! - Only key holders can decrypt descriptors, following the descriptor's original threshold logic
+//! - Encrypted data reveals nothing about the keys or spending conditions without decryption
+//! - Structure template extraction is possible without exposing sensitive information
+//! - The encryption is deterministic, producing the same output given the same descriptor
+//!
+//! The security of the system relies on the security of ChaCha20-Poly1305 for encryption and
+//! Shamir's Secret Sharing for threshold access control.
 //!
 
 // Coding conventions

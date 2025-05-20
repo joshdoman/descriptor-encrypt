@@ -30,8 +30,12 @@
 //!    encryption keys following the script's threshold requirements
 //! 3. **Per-Key Encryption**: Each share is encrypted with the corresponding public key from
 //!    the descriptor, ensuring only key holders can access them
-//! 4. **Template-Based Structure**: The descriptor's structure is preserved in an encrypted form,
-//!    allowing selective disclosure of information
+//! 4. **Compact Encoding**: Tag-based and LEB128 variable-length encoding is used to minimize the size
+//     of the encrypted data
+//! 5. **Payload Extraction**: Sensitive data, including the master fingerprints, public keys and xpubs,
+//     hashes, and timelocks, are extracted from the descriptor and encrypted
+//! 6. **Template Extraction**: The descriptor template and derivation paths remain visible in plaintext,
+//!    allowing key holders to derive the necessary public keys and recover the full descriptor
 //!
 //! ## Examples
 //!

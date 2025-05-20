@@ -25,7 +25,7 @@ enum Commands {
     Encrypt(EncryptArgs),
     /// Decrypts a Base64-encoded encrypted descriptor
     Decrypt(DecryptArgs),
-    /// Gets a template descriptor (dummy keys) from Base64-encoded encrypted data
+    /// Gets a template descriptor (dummy keys, fingerprints, hashes, and timelocks) from Base64-encoded encrypted data
     GetTemplate(GetTemplateArgs),
     /// Gets origin derivation paths from Base64-encoded encrypted data
     GetDerivationPaths(GetPathsArgs),

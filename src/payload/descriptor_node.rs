@@ -11,7 +11,9 @@ type DescriptorNodeThreshold<Pk> = Threshold<DescriptorNode<Pk>, 0>;
 /// A node can be keyless, a key, or a threshold of nodes
 #[derive(Clone, Debug)]
 pub enum DescriptorNode<Pk: MiniscriptKey> {
-    /// A keyless node
+    /// An unsatisfiable keyless node
+    Unsatisfiable(),
+    /// A satisfiable keyless node
     Keyless(),
     /// A key
     Key(Pk),
@@ -23,6 +25,7 @@ impl<Pk: MiniscriptKey> DescriptorNode<Pk> {
     /// Returns a list of keys in the descriptor
     pub fn extract_keys(&self) -> Vec<Pk> {
         match self {
+            DescriptorNode::Unsatisfiable() => Vec::new(),
             DescriptorNode::Keyless() => Vec::new(),
             DescriptorNode::Key(pk) => vec![pk.clone()],
             DescriptorNode::Threshold(thresh) => {
@@ -35,6 +38,7 @@ impl<Pk: MiniscriptKey> DescriptorNode<Pk> {
     /// Sets new_k = max(old_k - num(keyless), 0) in each threshold.
     pub fn prune_keyless(&self) -> Option<DescriptorNode<Pk>> {
         match self {
+            DescriptorNode::Unsatisfiable() => Some(self.clone()),
             DescriptorNode::Keyless() => None,
             DescriptorNode::Key(_) => Some(self.clone()),
             DescriptorNode::Threshold(thresh) => {
@@ -159,7 +163,7 @@ impl<Pk: MiniscriptKey, Ctx: ScriptContext> ToDescriptorNode<Pk> for Miniscript<
     fn to_node(&self) -> DescriptorNode<Pk> {
         match &self.node {
             Terminal::True => DescriptorNode::Keyless(),
-            Terminal::False => DescriptorNode::Keyless(),
+            Terminal::False => DescriptorNode::Unsatisfiable(),
             Terminal::PkK(pk) => DescriptorNode::Key(pk.clone()),
             Terminal::PkH(pk) => DescriptorNode::Key(pk.clone()),
             Terminal::RawPkH(_) => DescriptorNode::Keyless(),

@@ -27,6 +27,7 @@ type ShamirThreshold = Threshold<ShamirNode, 0>;
 
 #[derive(Clone, Debug)]
 enum ShamirNode {
+    Unsatisfiable(),
     Leaf(EncryptedShare),
     Threshold(ShamirThreshold),
 }
@@ -147,12 +148,14 @@ impl ShamirNode {
                 Ok(ShamirNode::Threshold(shamir_thresh))
             }
             DescriptorNode::Keyless() => unreachable!("node is keyless"),
+            DescriptorNode::Unsatisfiable() => Ok(ShamirNode::Unsatisfiable()),
         }
     }
 
     /// Returns a list of encrypted shares (in order)
     fn extract_encrypted_shares(&self) -> Vec<EncryptedShare> {
         match self {
+            ShamirNode::Unsatisfiable() => vec![],
             ShamirNode::Leaf(share) => vec![*share],
             ShamirNode::Threshold(thresh) => thresh
                 .iter()
@@ -190,6 +193,7 @@ impl ShamirNode {
                 Ok(ShamirNode::Threshold(shamir_thresh))
             }
             DescriptorNode::Keyless() => unreachable!("node is keyless"),
+            DescriptorNode::Unsatisfiable() => Ok(ShamirNode::Unsatisfiable())
         }
     }
 
@@ -226,6 +230,7 @@ impl ShamirNode {
         decrypt_leaves: bool,
     ) -> Result<Data, Error> {
         match self {
+            ShamirNode::Unsatisfiable() => Ok(vec![]),
             ShamirNode::Leaf(encrypted_share) => {
                 let index = *leaf_index;
                 *leaf_index += 1;

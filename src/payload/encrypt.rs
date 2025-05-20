@@ -1,10 +1,5 @@
 // SPDX-License-Identifier: CC0-1.0
 
-//! # Payload Descriptor Encryption
-//!
-//! TODO...
-//!
-
 use anyhow::{Result, anyhow, ensure};
 use chacha20::{
     ChaCha20,

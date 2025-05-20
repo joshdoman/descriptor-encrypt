@@ -1,10 +1,5 @@
 // SPDX-License-Identifier: CC0-1.0
 
-//! # Descriptor Tree
-//!
-//! TODO...
-//!
-
 use miniscript::{
     Legacy, Miniscript, MiniscriptKey, ScriptContext, Segwitv0, Threshold,
     descriptor::{Descriptor, Sh, ShInner, SortedMultiVec, Tr, Wsh, WshInner},

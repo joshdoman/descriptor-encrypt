@@ -1,9 +1,9 @@
 // Written in 2025 by Joshua Doman <joshsdoman@gmail.com>
 // SPDX-License-Identifier: CC0-1.0
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use clap::{Args, Parser, Subcommand};
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use std::str::FromStr;
 
 use descriptor_encrypt::bitcoin::bip32::DerivationPath;
@@ -74,8 +74,7 @@ fn handle_encrypt(args: EncryptArgs) -> Result<()> {
     let desc = Descriptor::<DescriptorPublicKey>::from_str(&args.descriptor)
         .context("Failed to parse descriptor string")?;
 
-    let encrypted_data = descriptor_encrypt::encrypt(desc)
-        .context("Encryption failed")?;
+    let encrypted_data = descriptor_encrypt::encrypt(desc).context("Encryption failed")?;
 
     println!("{}", BASE64_STANDARD.encode(encrypted_data));
 
@@ -83,7 +82,8 @@ fn handle_encrypt(args: EncryptArgs) -> Result<()> {
 }
 
 fn handle_decrypt(args: DecryptArgs) -> Result<()> {
-    let data_bytes = BASE64_STANDARD.decode(&args.data)
+    let data_bytes = BASE64_STANDARD
+        .decode(&args.data)
         .context("Failed to decode Base64 data for encrypted payload")?;
 
     if args.pks.is_empty() {
@@ -97,8 +97,8 @@ fn handle_decrypt(args: DecryptArgs) -> Result<()> {
         pks.push(pk);
     }
 
-    let decrypted_desc = descriptor_encrypt::decrypt(&data_bytes, pks)
-        .context("Decryption failed")?;
+    let decrypted_desc =
+        descriptor_encrypt::decrypt(&data_bytes, pks).context("Decryption failed")?;
 
     println!("{}", decrypted_desc);
 
@@ -106,7 +106,8 @@ fn handle_decrypt(args: DecryptArgs) -> Result<()> {
 }
 
 fn handle_get_template(args: GetTemplateArgs) -> Result<()> {
-    let data_bytes = BASE64_STANDARD.decode(&args.data)
+    let data_bytes = BASE64_STANDARD
+        .decode(&args.data)
         .context("Failed to decode Base64 data")?;
 
     let template_desc = descriptor_encrypt::get_template(&data_bytes)
@@ -118,7 +119,8 @@ fn handle_get_template(args: GetTemplateArgs) -> Result<()> {
 }
 
 fn handle_get_derivation_paths(args: GetPathsArgs) -> Result<()> {
-    let data_bytes = BASE64_STANDARD.decode(&args.data)
+    let data_bytes = BASE64_STANDARD
+        .decode(&args.data)
         .context("Failed to decode Base64 data")?;
 
     let paths: Vec<DerivationPath> = descriptor_encrypt::get_origin_derivation_paths(&data_bytes)

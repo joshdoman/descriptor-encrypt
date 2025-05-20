@@ -3,17 +3,17 @@
 
 //! # Descriptor Encrypt
 //!
-//! A cryptographic system that encrypts Bitcoin wallet descriptors such that only those 
+//! A cryptographic system that encrypts Bitcoin wallet descriptors such that only those
 //! who can spend the funds can recover the descriptor.
 //!
 //! ## Overview
 //!
-//! Bitcoin wallet descriptors encode the spending conditions for Bitcoin outputs, including 
-//! keys, scripts, and other requirements. While descriptors are powerful tools for representing 
-//! wallet structures, securely backing them up presents a challenge - especially for 
+//! Bitcoin wallet descriptors encode the spending conditions for Bitcoin outputs, including
+//! keys, scripts, and other requirements. While descriptors are powerful tools for representing
+//! wallet structures, securely backing them up presents a challenge - especially for
 //! multi-signature and complex script setups.
 //!
-//! This library implements a cryptographic system that allows any Bitcoin wallet descriptor to be 
+//! This library implements a cryptographic system that allows any Bitcoin wallet descriptor to be
 //! encrypted with a security model that directly mirrors the descriptor's spending conditions:
 //!
 //! - If your wallet requires 2-of-3 keys to spend, it will require exactly 2-of-3 keys to decrypt
@@ -40,8 +40,7 @@
 //! ```rust
 //! use std::str::FromStr;
 //! use descriptor_encrypt::{encrypt, decrypt};
-//! use miniscript::Descriptor;
-//! use miniscript::descriptor::DescriptorPublicKey;
+//! use miniscript::descriptor::{Descriptor, DescriptorPublicKey};
 //!
 //! // Create a descriptor - a 2-of-3 multisig in this example
 //! let desc_str = "wsh(multi(2,\
@@ -54,27 +53,28 @@
 //! // Encrypt the descriptor
 //! let encrypted_data = encrypt(descriptor.clone()).unwrap();
 //!
-//! // Later, decrypt with the keys (in this example, only the first two keys are provided, 
+//! // Later, decrypt with the keys (in this example, only the first two keys are provided,
 //! // which is sufficient for a 2-of-3 multisig)
-//! let keys = descriptor.to_node().extract_keys();
-//! let first_two_keys = vec![keys[0].clone(), keys[1].clone()];
+//! let pk0 = DescriptorPublicKey::from_str("03a0434d9e47f3c86235477c7b1ae6ae5d3442d49b1943c2b752a68e2a47e247c7").unwrap();
+//! let pk1 = DescriptorPublicKey::from_str("036d2b085e9e382ed10b69fc311a03f8641ccfff21574de0927513a49d9a688a00").unwrap();
+//! let first_two_keys = vec![pk0, pk1];
 //!
 //! // Recover the original descriptor
 //! let recovered_descriptor = decrypt(&encrypted_data, first_two_keys).unwrap();
 //! assert_eq!(descriptor.to_string(), recovered_descriptor.to_string());
 //! ```
 //!
-//! ### Using Templates and Derivation Paths
+//! ### Getting Template and Derivation Paths
 //!
-//! ```rust
+//! ```rust,ignore
 //! use descriptor_encrypt::{encrypt, get_template, get_origin_derivation_paths};
 //! // (imports and setup as in previous example)
-//! 
+//!
 //! let encrypted_data = encrypt(descriptor.clone()).unwrap();
 //!
 //! // Get a template descriptor with dummy keys (useful for analysis without revealing actual keys)
 //! let template = get_template(&encrypted_data).unwrap();
-//! 
+//!
 //! // Extract only the derivation paths (useful for watch-only wallets)
 //! let paths = get_origin_derivation_paths(&encrypted_data).unwrap();
 //! ```
@@ -121,12 +121,14 @@ pub use miniscript;
 mod payload;
 mod template;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use bitcoin::bip32::DerivationPath;
 use miniscript::{Descriptor, DescriptorPublicKey};
 use sha2::{Digest, Sha256};
 
 use crate::payload::ToDescriptorNode;
+
+const V0: u8 = 0u8;
 
 /// Encrypts a descriptor such that it can only be recovered by a set of
 /// keys with access to the funds.
@@ -144,7 +146,13 @@ pub fn encrypt(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
     let (encrypted_shares, encrypted_payload) =
         payload::encrypt_payload_and_shard_key(desc, encryption_key.into(), nonce, payload)?;
 
-    Ok([template, encrypted_shares.concat(), encrypted_payload].concat())
+    Ok([
+        vec![V0],
+        template,
+        encrypted_shares.concat(),
+        encrypted_payload,
+    ]
+    .concat())
 }
 
 /// Decrypts an encrypted descriptor using a set of public keys with access to the funds
@@ -152,6 +160,15 @@ pub fn decrypt(
     data: &[u8],
     pks: Vec<DescriptorPublicKey>,
 ) -> Result<Descriptor<DescriptorPublicKey>> {
+    if data.is_empty() {
+        return Err(anyhow!("Empty data"));
+    }
+
+    let data = match data[0] {
+        V0 => &data[1..],
+        _ => return Err(anyhow!("Unsupported version: {}", data[0])),
+    };
+
     let (template, size) = template::decode(data)?;
 
     let num_keys = template.clone().to_node().extract_keys().len();
@@ -178,6 +195,15 @@ pub fn decrypt(
 
 /// Returns a template with dummy keys, hashes, and timelocks
 pub fn get_template(data: &[u8]) -> Result<Descriptor<DescriptorPublicKey>> {
+    if data.is_empty() {
+        return Err(anyhow!("Empty data"));
+    }
+
+    let data = match data[0] {
+        V0 => &data[1..],
+        _ => return Err(anyhow!("Unsupported version: {}", data[0])),
+    };
+
     let (template, _) = template::decode(data)?;
 
     Ok(template)
@@ -185,6 +211,15 @@ pub fn get_template(data: &[u8]) -> Result<Descriptor<DescriptorPublicKey>> {
 
 /// Returns the origin derivation paths in the descriptor
 pub fn get_origin_derivation_paths(data: &[u8]) -> Result<Vec<DerivationPath>> {
+    if data.is_empty() {
+        return Err(anyhow!("Empty data"));
+    }
+
+    let data = match data[0] {
+        V0 => &data[1..],
+        _ => return Err(anyhow!("Unsupported version: {}", data[0])),
+    };
+
     let (template, _) = template::decode(data)?;
 
     let mut paths = Vec::new();
@@ -206,6 +241,7 @@ pub fn get_origin_derivation_paths(data: &[u8]) -> Result<Vec<DerivationPath>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::payload::ToDescriptorNode;
     use miniscript::{Descriptor, DescriptorPublicKey};
     use std::str::FromStr;
 
@@ -229,5 +265,76 @@ mod tests {
             let ciphertext = encrypt(desc.clone()).unwrap();
             assert_eq!(desc, decrypt(&ciphertext, keys).unwrap());
         }
+    }
+
+    #[test]
+    fn test_unsupported_version() {
+        let desc_str = "wpkh(02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9)";
+        let desc = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
+
+        // Modify the version byte to an invalid version
+        let mut encrypted_data = encrypt(desc.clone()).unwrap();
+        encrypted_data[0] = 0xFF;
+
+        let template_result = get_template(&encrypted_data);
+        assert!(
+            template_result
+                .unwrap_err()
+                .to_string()
+                .contains("Unsupported version: 255")
+        );
+
+        let paths_result = get_origin_derivation_paths(&encrypted_data);
+        assert!(
+            paths_result
+                .unwrap_err()
+                .to_string()
+                .contains("Unsupported version: 255")
+        );
+
+        let key = DescriptorPublicKey::from_str(
+            "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+        )
+        .unwrap();
+
+        let decrypt_result = decrypt(&encrypted_data, vec![key]);
+        assert!(
+            decrypt_result
+                .unwrap_err()
+                .to_string()
+                .contains("Unsupported version: 255")
+        );
+    }
+
+    #[test]
+    fn test_empty() {
+        let empty_data: Vec<u8> = vec![];
+
+        let template_result = get_template(&empty_data);
+        assert!(
+            template_result
+                .unwrap_err()
+                .to_string()
+                .contains("Empty data")
+        );
+
+        let paths_result = get_origin_derivation_paths(&empty_data);
+        assert!(paths_result.unwrap_err().to_string().contains("Empty data"));
+
+        let decrypt_result = decrypt(
+            &empty_data,
+            vec![
+                DescriptorPublicKey::from_str(
+                    "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+                )
+                .unwrap(),
+            ],
+        );
+        assert!(
+            decrypt_result
+                .unwrap_err()
+                .to_string()
+                .contains("Empty data")
+        );
     }
 }

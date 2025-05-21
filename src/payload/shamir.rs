@@ -1,4 +1,4 @@
-use rand::Rng;
+use sha2::{Digest, Sha256};
 
 // GF(2^8) defines operations over bytes.
 // Addition in GF(2^8) is XOR.
@@ -125,16 +125,21 @@ pub fn split_secret(secret: &[u8], k: usize, x_coords: &[u8]) -> Result<Vec<Shar
         });
     }
 
-    let mut rng = rand::rng();
-
     for &secret_byte in secret {
         let mut coeffs = vec![0u8; k];
         coeffs[0] = secret_byte; // a_0 = S (the secret byte)
 
         // Generate k-1 random coefficients (a_1, ..., a_{k-1})
         // If k=1, this loop does not run, only a_0 is used.
-        for i in 1..k {
-            coeffs[i] = rng.random::<u8>(); // Random byte for coefficient
+        if k > 1 {
+            let mut hasher = Sha256::new();
+            hasher.update(&[secret_byte]);
+            hasher.update(&x_coords);
+            let result = hasher.finalize();
+
+            for i in 1..k {
+                coeffs[i] = result[i % result.len()];
+            }
         }
 
         // For each x_coord, evaluate the polynomial and store the y_value
@@ -257,7 +262,7 @@ pub mod test_helpers {
 mod tests {
     use super::test_helpers::{gf_inv_test, gf_mul_test, poly_eval_horner_test};
     use super::*;
-    use rand::seq::SliceRandom;
+    use rand::{Rng, seq::SliceRandom};
 
     #[test]
     fn test_gf_mul_basic() {

@@ -3,10 +3,6 @@
 ## Overview
 A rust library and CLI tool that efficiently encrypts a Bitcoin wallet descriptor such that it can only be recovered by a set of keys that can spend the funds.
 
-## Demo
-
-[![descriptor-encrypt Demo](https://img.youtube.com/vi/ankTi65Y-EA/0.jpg)](https://www.youtube.com/watch?v=ankTi65Y-EA)
-
 ## Features
 
 `descriptor-encrypt` provides a robust mechanism for encrypting Bitcoin wallet descriptors with a security model that maps directly to the spending conditions of the descriptor itself. Here's what it does in detail:

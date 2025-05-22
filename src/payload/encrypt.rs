@@ -31,12 +31,6 @@ enum ShamirTree {
 /// is then encrypted using ChaCha20Poly1305, with keys derived from the
 /// corresponding public key in the descriptor, the ciphertext, and the key index.
 ///
-/// # Arguments
-/// - `descriptor_tree`: The descriptor governing how the master secret is sharded and keys are derived.
-/// - `master_encryption_key`: The 32-byte secret key. This key is used for primary payload encryption AND is the secret that gets sharded.
-/// - `nonce`: The 12-byte nonce for encrypting the `plaintext`.
-/// - `plaintext`: The data to be encrypted.
-///
 /// # Returns
 /// A result containing a tuple:
 ///   - `Vec<EncryptedShare>`: The list of encrypted Shamir shares of the `master_encryption_key`.
@@ -68,17 +62,7 @@ pub fn encrypt_with_full_secrecy(
     encrypt_with_cipher(cipher, descriptor, master_encryption_key, nonce, plaintext)
 }
 
-/// Reconstructs the master secret from its encrypted Shamir shares and decrypts the payload ciphertext.
-///
-/// # Arguments
-/// - `descriptor_tree`: The descriptor used during encryption.
-/// - `encrypted_shares`: The list of encrypted Shamir shares of the master secret.
-/// - `public_keys`: The public keys available to attempt decryption of shares.
-/// - `nonce`: The 12-byte nonce used for the original payload encryption.
-/// - `ciphertext`: The ciphertext of the payload to be decrypted.
-///
-/// # Returns
-/// A result containing the decrypted plaintext payload `Data`.
+/// Reconstructs the master secret from its encrypted Shamir shares and decrypts the ciphertext.
 pub fn decrypt_with_authenticated_shards(
     descriptor: Descriptor<DescriptorPublicKey>,
     encrypted_shares: Vec<EncryptedShare>,
@@ -86,21 +70,9 @@ pub fn decrypt_with_authenticated_shards(
     nonce: Nonce,
     ciphertext: Data,
 ) -> Result<Data> {
-    let keyless_node = descriptor.to_tree().prune_keyless();
-
-    ensure!(keyless_node.is_some(), Error::NoKeysRequired);
-
-    let mut leaf_index = 0;
-    let tree =
-        ShamirTree::reconstruct_tree(&keyless_node.unwrap(), &encrypted_shares, &mut leaf_index)?;
-
-    ensure! {
-        leaf_index == encrypted_shares.len(),
-        Error::TooManyShares
-    }
-
     let cipher = AuthenticatedCipher {};
     let pks = public_keys.iter().map(|pk| Some(pk)).collect();
+    let tree = ShamirTree::reconstruct(&descriptor, &encrypted_shares)?;
     tree.decrypt(pks, nonce, ciphertext, &cipher)
 }
 
@@ -114,20 +86,8 @@ pub fn decrypt_with_full_secrecy(
     nonce: Nonce,
     ciphertext: Data,
 ) -> Result<Data> {
-    let keyless_node = descriptor.to_tree().prune_keyless();
-
-    ensure!(keyless_node.is_some(), Error::NoKeysRequired);
-
-    let mut leaf_index = 0;
-    let tree =
-        ShamirTree::reconstruct_tree(&keyless_node.unwrap(), &encrypted_shares, &mut leaf_index)?;
-
-    ensure! {
-        leaf_index == encrypted_shares.len(),
-        Error::TooManyShares
-    }
-
     let cipher = UnauthenticatedCipher {};
+    let tree = ShamirTree::reconstruct(&descriptor, &encrypted_shares)?;
     let num_slots = encrypted_shares.len();
 
     // Deduplicate public keys
@@ -230,13 +190,34 @@ impl ShamirTree {
         }
     }
 
-    /// Reconstructs a shamir node from a descriptor node and a list of shares.
+    /// Reconstructs a shamir tree from a descriptor and a list of shares.
+    fn reconstruct(
+        descriptor: &Descriptor<DescriptorPublicKey>,
+        shares: &Vec<EncryptedShare>,
+    ) -> Result<Self> {
+        let keyless_node = descriptor.to_tree().prune_keyless();
+
+        ensure!(keyless_node.is_some(), Error::NoKeysRequired);
+
+        let mut leaf_index = 0;
+        let tree =
+            ShamirTree::reconstruct_tree(&keyless_node.unwrap(), &shares, &mut leaf_index)?;
+
+        ensure! {
+            leaf_index == shares.len(),
+            Error::TooManyShares
+        }
+
+        Ok(tree)
+    }
+
+    /// Helper function to reconstruct a shamir tree.
     fn reconstruct_tree(
-        node: &KeylessDescriptorTree<DescriptorPublicKey>,
+        tree: &KeylessDescriptorTree<DescriptorPublicKey>,
         shares: &Vec<EncryptedShare>,
         leaf_index: &mut usize,
     ) -> Result<Self> {
-        match node {
+        match tree {
             KeylessDescriptorTree::Key(_) => {
                 ensure! {
                     *leaf_index < shares.len(),

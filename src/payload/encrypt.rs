@@ -44,7 +44,7 @@ enum ShamirTree {
 /// A result containing a tuple:
 ///   - `Vec<EncryptedShare>`: The list of encrypted Shamir shares of the `master_encryption_key`.
 ///   - `Data` (Vec<u8>): The ciphertext of the `plaintext_payload`.
-pub fn encrypt_payload_and_shard_key(
+pub fn encrypt_with_authenticated_shards(
     descriptor: Descriptor<DescriptorPublicKey>,
     master_encryption_key: [u8; 32],
     nonce: Nonce,
@@ -87,7 +87,7 @@ pub fn encrypt_payload_and_shard_key(
 ///
 /// # Returns
 /// A result containing the decrypted plaintext payload `Data`.
-pub fn recover_key_and_decrypt_payload(
+pub fn decrypt_with_authenticated_shards(
     descriptor: Descriptor<DescriptorPublicKey>,
     encrypted_shares: Vec<EncryptedShare>,
     public_keys: Vec<DescriptorPublicKey>,
@@ -374,7 +374,7 @@ mod tests {
         let plaintext: Data = b"This is test plaintext".to_vec();
 
         let (shares, ciphertext) =
-            encrypt_payload_and_shard_key(descriptor, master_key, NONCE_VALUE, plaintext.clone())
+            encrypt_with_authenticated_shards(descriptor, master_key, NONCE_VALUE, plaintext.clone())
                 .unwrap();
 
         (shares, plaintext, ciphertext)
@@ -394,7 +394,7 @@ mod tests {
             "Single key descriptor should produce one share"
         );
 
-        let decrypted_plaintext = recover_key_and_decrypt_payload(
+        let decrypted_plaintext = decrypt_with_authenticated_shards(
             descriptor.clone(),
             shares.clone(),
             vec![pubkey_val.clone()],
@@ -410,7 +410,7 @@ mod tests {
 
         // Test decryption with an incorrect public key.
         let wrong_key_val = create_test_key(2);
-        let result = recover_key_and_decrypt_payload(
+        let result = decrypt_with_authenticated_shards(
             descriptor.clone(),
             shares.clone(),
             vec![wrong_key_val],
@@ -431,7 +431,7 @@ mod tests {
         // Test with different key combinations
         for i in 0..2 {
             let key_subset_vec = vec![pubkeys_vec[i].clone()];
-            let decrypted_plaintext = recover_key_and_decrypt_payload(
+            let decrypted_plaintext = decrypt_with_authenticated_shards(
                 descriptor.clone(),
                 shares.clone(),
                 key_subset_vec,
@@ -459,7 +459,7 @@ mod tests {
         for i in 0..3 {
             for j in (i + 1)..3 {
                 let key_subset_vec = vec![pubkeys_vec[i].clone(), pubkeys_vec[j].clone()];
-                let decrypted_plaintext = recover_key_and_decrypt_payload(
+                let decrypted_plaintext = decrypt_with_authenticated_shards(
                     descriptor.clone(),
                     shares.clone(),
                     key_subset_vec,
@@ -478,7 +478,7 @@ mod tests {
         // Test with insufficient keys (should fail)
         for i in 0..3 {
             let single_key_vec = vec![pubkeys_vec[i].clone()];
-            let result = recover_key_and_decrypt_payload(
+            let result = decrypt_with_authenticated_shards(
                 descriptor.clone(),
                 shares.clone(),
                 single_key_vec,
@@ -502,7 +502,7 @@ mod tests {
         assert_eq!(shares.len(), 5, "3-of-5 multisig should produce 5 shares");
 
         let key_subset_exact = vec![pubkeys[0].clone(), pubkeys[2].clone(), pubkeys[4].clone()];
-        let decrypted_exact = recover_key_and_decrypt_payload(
+        let decrypted_exact = decrypt_with_authenticated_shards(
             descriptor.clone(),
             shares.clone(),
             key_subset_exact,
@@ -522,7 +522,7 @@ mod tests {
             pubkeys[2].clone(),
             pubkeys[3].clone(),
         ];
-        let decrypted_more = recover_key_and_decrypt_payload(
+        let decrypted_more = decrypt_with_authenticated_shards(
             descriptor.clone(),
             shares.clone(),
             key_subset_more,
@@ -537,7 +537,7 @@ mod tests {
         );
 
         let key_subset_less = vec![pubkeys[0].clone(), pubkeys[1].clone()];
-        let decrypted_less = recover_key_and_decrypt_payload(
+        let decrypted_less = decrypt_with_authenticated_shards(
             descriptor.clone(),
             shares.clone(),
             key_subset_less,
@@ -569,7 +569,7 @@ mod tests {
 
         // Test case 1: key3 + key4 (satisfies outer threshold)
         let key_subset1 = vec![key3.clone(), key4.clone()];
-        let decrypted1 = recover_key_and_decrypt_payload(
+        let decrypted1 = decrypt_with_authenticated_shards(
             descriptor.clone(),
             shares.clone(),
             key_subset1,
@@ -581,7 +581,7 @@ mod tests {
 
         // Test case 2: key1 + key3 (key1 from inner, key3 from outer)
         let key_subset2 = vec![key1.clone(), key3.clone()];
-        let decrypted2 = recover_key_and_decrypt_payload(
+        let decrypted2 = decrypt_with_authenticated_shards(
             descriptor.clone(),
             shares.clone(),
             key_subset2,
@@ -593,7 +593,7 @@ mod tests {
 
         // Test case 3: key1 + key4 (key1 from inner, key4 from outer)
         let key_subset2 = vec![key1.clone(), key4.clone()];
-        let decrypted2 = recover_key_and_decrypt_payload(
+        let decrypted2 = decrypt_with_authenticated_shards(
             descriptor.clone(),
             shares.clone(),
             key_subset2,
@@ -605,7 +605,7 @@ mod tests {
 
         // Test case 4: key2 + key3 (key2 from inner, key3 from outer)
         let key_subset2 = vec![key2.clone(), key3.clone()];
-        let decrypted2 = recover_key_and_decrypt_payload(
+        let decrypted2 = decrypt_with_authenticated_shards(
             descriptor.clone(),
             shares.clone(),
             key_subset2,
@@ -617,7 +617,7 @@ mod tests {
 
         // Test case 5: only key3 (insufficient)
         let key_subset_insufficient1 = vec![key3.clone()];
-        let decrypted_insufficient1 = recover_key_and_decrypt_payload(
+        let decrypted_insufficient1 = decrypt_with_authenticated_shards(
             descriptor.clone(),
             shares.clone(),
             key_subset_insufficient1,
@@ -631,7 +631,7 @@ mod tests {
 
         // Test case 6: key1 + key2 (both from inner threshold, but insufficient for outer)
         let key_subset_insufficient2 = vec![key1.clone(), key2.clone()];
-        let decrypted_insufficient2 = recover_key_and_decrypt_payload(
+        let decrypted_insufficient2 = decrypt_with_authenticated_shards(
             descriptor.clone(),
             shares.clone(),
             key_subset_insufficient2,
@@ -657,7 +657,7 @@ mod tests {
 
         let key_subset = vec![pubkeys[0].clone(), pubkeys[1].clone()];
 
-        let decrypted_plaintext = recover_key_and_decrypt_payload(
+        let decrypted_plaintext = decrypt_with_authenticated_shards(
             descriptor.clone(),
             shares,
             key_subset,
@@ -677,7 +677,7 @@ mod tests {
         let master_key = [1u8; 32];
         let p_text: Data = b"Test".to_vec();
 
-        let result = encrypt_payload_and_shard_key(
+        let result = encrypt_with_authenticated_shards(
             desc_pk_keyless.clone(),
             master_key,
             NONCE_VALUE,
@@ -695,7 +695,7 @@ mod tests {
         let (desc_2_of_3, keys_2_of_3) = create_threshold_descriptor(2, 3);
         let one_share: Vec<EncryptedShare> = vec![[2u8; 48].to_vec()];
 
-        let result = recover_key_and_decrypt_payload(
+        let result = decrypt_with_authenticated_shards(
             desc_2_of_3.clone(),
             one_share,
             keys_2_of_3.iter().take(2).cloned().collect(),
@@ -708,7 +708,7 @@ mod tests {
         let (desc_1_of_1, keys_1_of_1) = create_threshold_descriptor(1, 1);
         let two_shares: Vec<EncryptedShare> = vec![[2u8; 48].to_vec(), [3u8; 48].to_vec()];
 
-        let result = recover_key_and_decrypt_payload(
+        let result = decrypt_with_authenticated_shards(
             desc_1_of_1.clone(),
             two_shares,
             keys_1_of_1,
@@ -719,7 +719,7 @@ mod tests {
 
         // Test 4: Decrypt with wrong ciphertext
         let wrong_ciphertext = b"Wrong encryption context".to_vec();
-        let result = recover_key_and_decrypt_payload(
+        let result = decrypt_with_authenticated_shards(
             valid_descriptor.clone(),
             shares_valid.clone(),
             pubkeys_valid.clone(),

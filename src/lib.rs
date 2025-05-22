@@ -148,7 +148,7 @@ pub fn encrypt(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
     // Encrypt payload and shard encryption key into encrypted shares (1 per key)
     let nonce = [0u8; 12];
     let (encrypted_shares, encrypted_payload) =
-        payload::encrypt_payload_and_shard_key(desc, encryption_key.into(), nonce, payload)?;
+        payload::encrypt_with_authenticated_shards(desc, encryption_key.into(), nonce, payload)?;
 
     Ok([
         vec![V0],
@@ -189,7 +189,7 @@ pub fn decrypt(
     let encrypted_payload = &data[size + num_keys * 48..];
 
     let nonce = [0u8; 12];
-    let payload = payload::recover_key_and_decrypt_payload(
+    let payload = payload::decrypt_with_authenticated_shards(
         template.clone(),
         encrypted_shares,
         pks,

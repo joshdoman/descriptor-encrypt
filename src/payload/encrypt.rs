@@ -461,6 +461,20 @@ mod tests {
         (shares, plaintext, ciphertext)
     }
 
+    // Helper to get plaintext, ciphertext, and encrypted shares using unauthenticated encryption
+    fn get_encrypted_data_with_full_secrecy(
+        descriptor: Descriptor<DescriptorPublicKey>,
+    ) -> (Vec<EncryptedShare>, Data, Data) {
+        let master_key = [1u8; 32];
+        let plaintext: Data = b"This is test plaintext for unauth".to_vec();
+
+        let (shares, ciphertext) =
+            encrypt_with_full_secrecy(descriptor, master_key, NONCE_VALUE, plaintext.clone())
+                .unwrap();
+
+        (shares, plaintext, ciphertext)
+    }
+
     #[test]
     fn test_single_key_encryption() {
         let pubkey_val = create_test_key(1);
@@ -801,6 +815,383 @@ mod tests {
         // Test 4: Decrypt with wrong ciphertext
         let wrong_ciphertext = b"Wrong encryption context".to_vec();
         let result = decrypt_with_authenticated_shards(
+            valid_descriptor.clone(),
+            shares_valid.clone(),
+            pubkeys_valid.clone(),
+            NONCE_VALUE,
+            wrong_ciphertext,
+        );
+        assert!(
+            result.is_err(),
+            "Decryption should fail with wrong ciphertext"
+        );
+    }
+
+    /// With Full Secrecy
+
+    #[test]
+    fn test_single_key_encryption_with_full_secrecy() {
+        let pubkey_val = create_test_key(101);
+        let desc_str = format!("wpkh({})", pubkey_val);
+        let descriptor = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
+
+        let (shares, plaintext, ciphertext) =
+            get_encrypted_data_with_full_secrecy(descriptor.clone());
+
+        assert_eq!(
+            shares.len(),
+            1,
+            "Single key descriptor should produce one share"
+        );
+
+        let decrypted_plaintext = decrypt_with_full_secrecy(
+            descriptor.clone(),
+            shares.clone(),
+            vec![pubkey_val.clone()],
+            NONCE_VALUE,
+            ciphertext.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            decrypted_plaintext, plaintext,
+            "Decrypted plaintext doesn't match original (unauthenticated)"
+        );
+
+        let wrong_key_val = create_test_key(102);
+        let result = decrypt_with_full_secrecy(
+            descriptor.clone(),
+            shares.clone(),
+            vec![wrong_key_val],
+            NONCE_VALUE,
+            ciphertext,
+        );
+        assert!(
+            result.is_err(),
+            "Decryption should fail with wrong key (unauthenticated)"
+        );
+        assert_eq!(
+            result.unwrap_err().downcast_ref::<Error>().unwrap(),
+            &Error::DecryptionFailed
+        );
+    }
+
+    #[test]
+    fn test_multi_key_threshold_1of2_with_full_secrecy() {
+        let (descriptor, pubkeys_vec) = create_threshold_descriptor(1, 2);
+        let (shares, plaintext, ciphertext) =
+            get_encrypted_data_with_full_secrecy(descriptor.clone());
+
+        assert_eq!(
+            shares.len(),
+            2,
+            "1-of-2 multisig should produce 2 shares (unauthenticated)"
+        );
+
+        for i in 0..2 {
+            let key_subset_vec = vec![pubkeys_vec[i].clone()];
+            let decrypted_plaintext = decrypt_with_full_secrecy(
+                descriptor.clone(),
+                shares.clone(),
+                key_subset_vec,
+                NONCE_VALUE,
+                ciphertext.clone(),
+            )
+            .unwrap();
+
+            assert_eq!(
+                decrypted_plaintext, plaintext,
+                "Decrypted plaintext doesn't match original (unauthenticated)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_multi_key_threshold_2of3_with_full_secrecy() {
+        let (descriptor, pubkeys_vec) = create_threshold_descriptor(2, 3);
+        let (shares, plaintext, ciphertext) =
+            get_encrypted_data_with_full_secrecy(descriptor.clone());
+
+        assert_eq!(
+            shares.len(),
+            3,
+            "2-of-3 multisig should produce 3 shares (unauthenticated)"
+        );
+
+        for i in 0..3 {
+            for j in (i + 1)..3 {
+                let key_subset_vec = vec![pubkeys_vec[i].clone(), pubkeys_vec[j].clone()];
+                let decrypted_plaintext = decrypt_with_full_secrecy(
+                    descriptor.clone(),
+                    shares.clone(),
+                    key_subset_vec,
+                    NONCE_VALUE,
+                    ciphertext.clone(),
+                )
+                .unwrap();
+
+                assert_eq!(
+                    decrypted_plaintext, plaintext,
+                    "Decrypted plaintext doesn't match original (unauthenticated)"
+                );
+            }
+        }
+
+        for i in 0..3 {
+            let single_key_vec = vec![pubkeys_vec[i].clone()];
+            let result = decrypt_with_full_secrecy(
+                descriptor.clone(),
+                shares.clone(),
+                single_key_vec,
+                NONCE_VALUE,
+                ciphertext.clone(),
+            );
+
+            assert!(
+                result.is_err(),
+                "Decryption should fail with only 1 key for 2-of-3 (unauthenticated)"
+            );
+            assert_eq!(
+                result.unwrap_err().downcast_ref::<Error>().unwrap(),
+                &Error::DecryptionFailed
+            );
+        }
+    }
+
+    #[test]
+    fn test_multi_key_threshold_3of5_with_full_secrecy() {
+        let (descriptor, pubkeys) = create_threshold_descriptor(3, 5);
+        let (shares, plaintext, ciphertext) =
+            get_encrypted_data_with_full_secrecy(descriptor.clone());
+
+        assert_eq!(
+            shares.len(),
+            5,
+            "3-of-5 multisig should produce 5 shares (unauthenticated)"
+        );
+
+        let key_subset_exact = vec![pubkeys[0].clone(), pubkeys[2].clone(), pubkeys[4].clone()];
+        let decrypted_exact = decrypt_with_full_secrecy(
+            descriptor.clone(),
+            shares.clone(),
+            key_subset_exact,
+            NONCE_VALUE,
+            ciphertext.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            decrypted_exact, plaintext,
+            "Decrypted plaintext doesn't match original with exact keys (unauthenticated)"
+        );
+
+        let key_subset_more = vec![
+            pubkeys[0].clone(),
+            pubkeys[1].clone(),
+            pubkeys[2].clone(),
+            pubkeys[3].clone(),
+        ];
+        let decrypted_more = decrypt_with_full_secrecy(
+            descriptor.clone(),
+            shares.clone(),
+            key_subset_more,
+            NONCE_VALUE,
+            ciphertext.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            decrypted_more, plaintext,
+            "Decrypted plaintext doesn't match original with more keys (unauthenticated)"
+        );
+
+        let key_subset_less = vec![pubkeys[0].clone(), pubkeys[1].clone()];
+        let decrypted_less = decrypt_with_full_secrecy(
+            descriptor.clone(),
+            shares.clone(),
+            key_subset_less,
+            NONCE_VALUE,
+            ciphertext.clone(),
+        );
+        assert!(
+            decrypted_less.is_err(),
+            "Decryption should fail with only 2 keys for 3-of-5 (unauthenticated)"
+        );
+        assert_eq!(
+            decrypted_less.unwrap_err().downcast_ref::<Error>().unwrap(),
+            &Error::DecryptionFailed
+        );
+    }
+
+    #[test]
+    fn test_nested_thresholds_with_full_secrecy() {
+        let key1 = create_test_key(201);
+        let key2 = create_test_key(202);
+        let key3 = create_test_key(203);
+        let key4 = create_test_key(204);
+
+        let desc_str = format!(
+            "wsh(thresh(2,or_d(pk({}),pk({})),s:pk({}),s:pk({})))",
+            key1, key2, key3, key4
+        );
+        let descriptor = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
+        let (shares, plaintext, ciphertext) =
+            get_encrypted_data_with_full_secrecy(descriptor.clone());
+        assert_eq!(
+            shares.len(),
+            4,
+            "Nested thresholds should produce 4 shares (unauthenticated)"
+        );
+
+        let key_subset1 = vec![key3.clone(), key4.clone()];
+        let decrypted1 = decrypt_with_full_secrecy(
+            descriptor.clone(),
+            shares.clone(),
+            key_subset1,
+            NONCE_VALUE,
+            ciphertext.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            decrypted1, plaintext,
+            "Mismatch for key3 + key4 (unauthenticated)"
+        );
+
+        let key_subset2 = vec![key1.clone(), key3.clone()];
+        let decrypted2 = decrypt_with_full_secrecy(
+            descriptor.clone(),
+            shares.clone(),
+            key_subset2,
+            NONCE_VALUE,
+            ciphertext.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            decrypted2, plaintext,
+            "Mismatch for key1 + key3 (unauthenticated)"
+        );
+
+        let key_subset_insufficient1 = vec![key3.clone()];
+        let decrypted_insufficient1 = decrypt_with_full_secrecy(
+            descriptor.clone(),
+            shares.clone(),
+            key_subset_insufficient1,
+            NONCE_VALUE,
+            ciphertext.clone(),
+        );
+        assert!(
+            decrypted_insufficient1.is_err(),
+            "Decryption should fail with only key3 (unauthenticated)"
+        );
+        assert_eq!(
+            decrypted_insufficient1
+                .unwrap_err()
+                .downcast_ref::<Error>()
+                .unwrap(),
+            &Error::DecryptionFailed
+        );
+
+        let key_subset_insufficient2 = vec![key1.clone(), key2.clone()];
+        let decrypted_insufficient2 = decrypt_with_full_secrecy(
+            descriptor.clone(),
+            shares.clone(),
+            key_subset_insufficient2,
+            NONCE_VALUE,
+            ciphertext.clone(),
+        );
+        assert!(
+            decrypted_insufficient2.is_err(),
+            "Decryption should fail with only inner threshold keys (unauthenticated)"
+        );
+        assert_eq!(
+            decrypted_insufficient2
+                .unwrap_err()
+                .downcast_ref::<Error>()
+                .unwrap(),
+            &Error::DecryptionFailed
+        );
+    }
+
+    #[test]
+    fn test_reconstruction_with_incorrect_shares_content_with_full_secrecy() {
+        let (descriptor, pubkeys) = create_threshold_descriptor(2, 3);
+        let (mut shares, _plaintext, ciphertext) =
+            get_encrypted_data_with_full_secrecy(descriptor.clone());
+
+        if !shares.is_empty() {
+            shares[0] = [2u8; 32].to_vec(); // Unauthenticated shares are 32 bytes
+        }
+
+        let key_subset = vec![pubkeys[0].clone(), pubkeys[1].clone()];
+        let decrypted_plaintext = decrypt_with_full_secrecy(
+            descriptor.clone(),
+            shares,
+            key_subset,
+            NONCE_VALUE,
+            ciphertext.clone(),
+        );
+        assert!(
+            decrypted_plaintext.is_err(),
+            "Decryption should fail when share content is corrupted (unauthenticated)"
+        );
+        assert_eq!(
+            decrypted_plaintext
+                .unwrap_err()
+                .downcast_ref::<Error>()
+                .unwrap(),
+            &Error::DecryptionFailed
+        );
+    }
+
+    #[test]
+    fn test_error_conditions_with_full_secrecy() {
+        // Test 1: A keyless descriptor for encryption
+        let desc_pk_keyless = Descriptor::<DescriptorPublicKey>::from_str("wsh(1)").unwrap();
+        let master_key = [1u8; 32];
+        let p_text: Data = b"Test".to_vec();
+
+        let result = encrypt_with_full_secrecy(
+            desc_pk_keyless.clone(),
+            master_key,
+            NONCE_VALUE,
+            p_text.clone(),
+        );
+        assert!(
+            result.is_err(),
+            "Encryption should fail with a keyless descriptor"
+        );
+
+        let (valid_descriptor, pubkeys_valid) = create_threshold_descriptor(1, 1);
+        let (shares_valid, _, ciphertext_valid) =
+            get_encrypted_data_with_full_secrecy(valid_descriptor.clone());
+
+        // Test 2: Recover with too few shares
+        let (desc_2_of_3, keys_2_of_3) = create_threshold_descriptor(2, 3);
+        let one_share: Vec<EncryptedShare> = vec![[2u8; 48].to_vec()];
+
+        let result = decrypt_with_full_secrecy(
+            desc_2_of_3.clone(),
+            one_share,
+            keys_2_of_3.iter().take(2).cloned().collect(),
+            NONCE_VALUE,
+            ciphertext_valid.clone(),
+        );
+        assert!(result.is_err(), "Recovery should fail if too few shares");
+
+        // Test 3: Recover with too many shares
+        let (desc_1_of_1, keys_1_of_1) = create_threshold_descriptor(1, 1);
+        let two_shares: Vec<EncryptedShare> = vec![[2u8; 48].to_vec(), [3u8; 48].to_vec()];
+
+        let result = decrypt_with_full_secrecy(
+            desc_1_of_1.clone(),
+            two_shares,
+            keys_1_of_1,
+            NONCE_VALUE,
+            ciphertext_valid.clone(),
+        );
+        assert!(result.is_err(), "Recovery should fail if too many shares");
+
+        // Test 4: Decrypt with wrong ciphertext
+        let wrong_ciphertext = b"Wrong encryption context".to_vec();
+        let result = decrypt_with_full_secrecy(
             valid_descriptor.clone(),
             shares_valid.clone(),
             pubkeys_valid.clone(),

@@ -305,6 +305,9 @@ mod tests {
 
             let keys = desc.clone().to_tree().extract_keys();
             let ciphertext = encrypt(desc.clone()).unwrap();
+            assert_eq!(desc, decrypt(&ciphertext, keys.clone()).unwrap());
+
+            let ciphertext = encrypt_with_full_secrecy(desc.clone()).unwrap();
             assert_eq!(desc, decrypt(&ciphertext, keys).unwrap());
         }
     }

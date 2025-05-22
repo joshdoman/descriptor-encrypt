@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: CC0-1.0
 
+mod cipher;
 mod descriptor_tree;
 mod encrypt;
 mod shamir;

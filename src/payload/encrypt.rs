@@ -5,23 +5,19 @@ use chacha20::{
     ChaCha20,
     cipher::{KeyIvInit, StreamCipher},
 };
-use chacha20poly1305::{
-    ChaCha20Poly1305,
-    aead::{Aead, KeyInit},
-};
 use miniscript::{
     Threshold,
-    descriptor::{Descriptor, DescriptorPublicKey, SinglePubKey},
+    descriptor::{Descriptor, DescriptorPublicKey},
 };
 use sha2::{Digest, Sha256};
 
+use super::cipher::{AuthenticatedCipher, KeyCipher};
 use super::descriptor_tree::{KeylessDescriptorTree, ToDescriptorTree};
 use super::shamir::{Share, reconstruct_secret, split_secret};
 
 type Data = Vec<u8>;
-type EncryptedShare = [u8; 48];
+type EncryptedShare = Vec<u8>;
 type Nonce = [u8; 12];
-type Secret = [u8; 32];
 
 type ShamirThreshold = Threshold<ShamirTree, 0>;
 
@@ -50,7 +46,7 @@ enum ShamirTree {
 ///   - `Data` (Vec<u8>): The ciphertext of the `plaintext_payload`.
 pub fn encrypt_payload_and_shard_key(
     descriptor: Descriptor<DescriptorPublicKey>,
-    master_encryption_key: Secret,
+    master_encryption_key: [u8; 32],
     nonce: Nonce,
     plaintext: Data,
 ) -> Result<(Vec<EncryptedShare>, Data)> {
@@ -67,10 +63,12 @@ pub fn encrypt_payload_and_shard_key(
     hasher.update(&ciphertext);
     let hash = hasher.finalize();
 
+    let cipher = AuthenticatedCipher {};
     let tree = ShamirTree::build_tree(
         &keyless_node.unwrap(),
         master_encryption_key.to_vec(),
-        &hash.to_vec(),
+        &hash.as_slice().try_into().unwrap(),
+        &cipher,
         &mut 0,
     )?;
 
@@ -109,37 +107,32 @@ pub fn recover_key_and_decrypt_payload(
         Error::TooManyShares
     }
 
-    tree.decrypt(public_keys, nonce, ciphertext)
+    let cipher = AuthenticatedCipher {};
+    tree.decrypt(public_keys, nonce, ciphertext, &cipher)
 }
 
 impl ShamirTree {
     /// Constructs a tree of encrypted shamir shares
-    fn build_tree(
+    fn build_tree<T: KeyCipher>(
         node: &KeylessDescriptorTree<DescriptorPublicKey>,
         share: Data,
-        hash: &Data,
+        hash: &[u8; 32],
+        cipher: &T,
         leaf_index: &mut usize,
     ) -> Result<Self> {
         match node {
             KeylessDescriptorTree::Key(pk) => {
-                let (nonce, cipher) = Self::get_cipher(pk, hash, *leaf_index)?;
-                let encrypted_share = cipher
-                    .encrypt(&nonce, share.as_ref())
-                    .map_err(|e| anyhow::anyhow!("ChaCha20Poly1305 encryption error: {:?}", e))?;
+                let index = *leaf_index;
                 *leaf_index += 1;
 
-                assert_eq!(encrypted_share.len(), 48);
-
-                Ok(ShamirTree::Leaf(
-                    encrypted_share.as_slice().try_into().unwrap(),
-                ))
+                Ok(ShamirTree::Leaf(cipher.encrypt(share, &pk, hash, index)?))
             }
             KeylessDescriptorTree::Threshold(thresh) => {
                 let xs: Vec<u8> = (1..=thresh.n() as u8).collect();
                 let shares = split_secret(&share, thresh.k(), &xs).map_err(|e| anyhow!(e))?;
                 let mut shamir_nodes = Vec::new();
                 for (node, share) in thresh.iter().zip(shares.into_iter()) {
-                    let tree = Self::build_tree(node, share.ys, hash, leaf_index)?;
+                    let tree = Self::build_tree::<T>(node, share.ys, hash, cipher, leaf_index)?;
                     shamir_nodes.push(tree);
                 }
                 let shamir_thresh = ShamirThreshold::new(thresh.k(), shamir_nodes)?;
@@ -152,7 +145,7 @@ impl ShamirTree {
     /// Returns a list of encrypted shares (in order)
     fn extract_encrypted_shares(&self) -> Vec<EncryptedShare> {
         match self {
-            ShamirTree::Leaf(share) => vec![*share],
+            ShamirTree::Leaf(share) => vec![share.clone()],
             ShamirTree::Threshold(thresh) => thresh
                 .iter()
                 .flat_map(|node| node.extract_encrypted_shares())
@@ -173,10 +166,10 @@ impl ShamirTree {
                     Error::InsufficientShares
                 }
 
-                let encrypted_share = shares[*leaf_index];
+                let index = *leaf_index;
                 *leaf_index += 1;
 
-                Ok(ShamirTree::Leaf(encrypted_share))
+                Ok(ShamirTree::Leaf(shares[index].clone()))
             }
             KeylessDescriptorTree::Threshold(thresh) => {
                 let mut shamir_nodes = Vec::new();
@@ -192,17 +185,24 @@ impl ShamirTree {
     }
 
     /// Decrypts ciphertext reassembling the master secret using a list of public keys
-    fn decrypt(
+    fn decrypt<T: KeyCipher>(
         &self,
         keys: Vec<DescriptorPublicKey>,
         nonce: Nonce,
         ciphertext: Data,
+        cipher: &T,
     ) -> Result<Data> {
         let mut hasher = Sha256::new();
         hasher.update(&ciphertext);
         let hash = hasher.finalize();
 
-        let secret = self.decrypt_tree(&keys, &hash.to_vec(), &mut 0, true)?;
+        let secret = self.decrypt_tree::<T>(
+            &keys,
+            &hash.as_slice().try_into().unwrap(),
+            cipher,
+            &mut 0,
+            true,
+        )?;
 
         assert!(secret.len() == 32);
 
@@ -216,10 +216,11 @@ impl ShamirTree {
     }
 
     /// Helper function to decrypt tree of encrypted shamir shares
-    fn decrypt_tree(
+    fn decrypt_tree<T: KeyCipher>(
         &self,
         keys: &Vec<DescriptorPublicKey>,
-        hash: &Data,
+        hash: &[u8; 32],
+        cipher: &T,
         leaf_index: &mut usize,
         decrypt_leaves: bool,
     ) -> Result<Data, Error> {
@@ -232,15 +233,9 @@ impl ShamirTree {
                     return Ok(vec![]);
                 }
 
-                for key in keys {
-                    let Ok((nonce, cipher)) = Self::get_cipher(key, hash, index) else {
-                        continue;
-                    };
-                    let Ok(result) = cipher.decrypt(&nonce, encrypted_share.as_ref()) else {
-                        continue;
-                    };
-
-                    return Ok(result);
+                if let Some(plaintext) = cipher.decrypt(encrypted_share.to_vec(), keys, hash, index)
+                {
+                    return Ok(plaintext);
                 }
 
                 Err(Error::KeysRequired(1))
@@ -249,7 +244,13 @@ impl ShamirTree {
                 let mut shares = Vec::new();
                 let mut keys_required = Vec::new();
                 for (i, node) in thresh.iter().enumerate() {
-                    match node.decrypt_tree(keys, hash, leaf_index, shares.len() < thresh.k()) {
+                    match node.decrypt_tree::<T>(
+                        keys,
+                        hash,
+                        cipher,
+                        leaf_index,
+                        shares.len() < thresh.k(),
+                    ) {
                         Ok(ys) => {
                             let share = Share {
                                 x: (i as u8) + 1,
@@ -276,36 +277,6 @@ impl ShamirTree {
                 }
             }
         }
-    }
-
-    /// Returns nonce and ChaCha20-Poly1305 cipher to encrypt and decrypt data
-    fn get_cipher(
-        pk: &DescriptorPublicKey,
-        hash: &Data,
-        leaf_index: usize,
-    ) -> Result<(chacha20poly1305::Nonce, ChaCha20Poly1305)> {
-        let mut key_material = match pk {
-            DescriptorPublicKey::Single(single_pub) => match single_pub.key {
-                SinglePubKey::FullKey(full_pk) => full_pk.inner.serialize().to_vec(),
-                SinglePubKey::XOnly(xpk) => xpk.serialize().to_vec(),
-            },
-            DescriptorPublicKey::XPub(xkey) => xkey.xkey.encode().to_vec(),
-            DescriptorPublicKey::MultiXPub(multi_xkey) => multi_xkey.xkey.encode().to_vec(),
-        };
-        key_material.extend(hash.clone());
-        key_material.extend(leaf_index.to_le_bytes().to_vec());
-
-        let mut hasher = Sha256::new();
-        hasher.update(key_material);
-        let final_key = hasher.finalize();
-
-        // We can safely use a zero nonce because the key is unique to the ciphertext and index
-        let nonce = [0u8; 12];
-        let nonce = chacha20poly1305::Nonce::from_slice(&nonce);
-        let cipher = ChaCha20Poly1305::new_from_slice(&final_key)
-            .map_err(|e| anyhow::anyhow!("ChaCha20Poly1305 key error: {:?}", e))?;
-
-        Ok((*nonce, cipher))
     }
 }
 
@@ -399,7 +370,7 @@ mod tests {
     fn get_encrypted_data(
         descriptor: Descriptor<DescriptorPublicKey>,
     ) -> Result<(Vec<EncryptedShare>, Data, Data)> {
-        let master_key: Secret = [1u8; 32];
+        let master_key = [1u8; 32];
         let plaintext: Data = b"This is test plaintext".to_vec();
 
         let (shares, ciphertext) =
@@ -673,7 +644,7 @@ mod tests {
 
         // Corrupt one of the shares
         if !shares.is_empty() {
-            shares[0] = [2u8; 48];
+            shares[0] = [2u8; 48].to_vec();
         }
 
         let key_subset = vec![pubkeys[0].clone(), pubkeys[1].clone()];
@@ -697,7 +668,7 @@ mod tests {
     fn test_error_conditions() -> Result<()> {
         // Test 1: A keyless descriptor for encryption
         let desc_pk_keyless = Descriptor::<DescriptorPublicKey>::from_str("wsh(1)")?;
-        let master_key: Secret = [1u8; 32];
+        let master_key = [1u8; 32];
         let p_text: Data = b"Test".to_vec();
 
         let result = encrypt_payload_and_shard_key(
@@ -716,7 +687,7 @@ mod tests {
 
         // Test 2: Recover with too few shares
         let (desc_2_of_3, keys_2_of_3) = create_threshold_descriptor(2, 3);
-        let one_share: Vec<EncryptedShare> = vec![[2u8; 48]];
+        let one_share: Vec<EncryptedShare> = vec![[2u8; 48].to_vec()];
 
         let result = recover_key_and_decrypt_payload(
             desc_2_of_3.clone(),
@@ -729,7 +700,7 @@ mod tests {
 
         // Test 3: Recover with too many shares
         let (desc_1_of_1, keys_1_of_1) = create_threshold_descriptor(1, 1);
-        let two_shares: Vec<EncryptedShare> = vec![[2u8; 48], [3u8; 48]];
+        let two_shares: Vec<EncryptedShare> = vec![[2u8; 48].to_vec(), [3u8; 48].to_vec()];
 
         let result = recover_key_and_decrypt_payload(
             desc_1_of_1.clone(),

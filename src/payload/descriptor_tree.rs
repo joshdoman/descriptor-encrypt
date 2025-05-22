@@ -62,7 +62,7 @@ impl<Pk: MiniscriptKey> DescriptorTree<Pk> {
                             keyed_subtrees.push(subtree);
                         }
                         (true, None) => assume_satisfied += 1,
-                        (false, None) => {},
+                        (false, None) => {}
                     }
                 }
 
@@ -77,9 +77,12 @@ impl<Pk: MiniscriptKey> DescriptorTree<Pk> {
                     (1, 1) => (true, Some(keyed_subtrees.first().unwrap().clone())),
                     (k, n) => {
                         if k <= n {
-                            (true, KeylessDescriptorTreeThreshold::new(new_k, keyed_subtrees)
-                            .ok()
-                            .map(KeylessDescriptorTree::Threshold))
+                            (
+                                true,
+                                KeylessDescriptorTreeThreshold::new(new_k, keyed_subtrees)
+                                    .ok()
+                                    .map(KeylessDescriptorTree::Threshold),
+                            )
                         } else {
                             (false, None)
                         }

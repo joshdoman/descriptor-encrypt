@@ -176,9 +176,14 @@ pub fn decrypt(
     let (template, size) = template::decode(data)?;
 
     let num_keys = template.clone().to_tree().extract_keys().len();
-    let encrypted_shares: Vec<[u8; 48]> = data[size..size + num_keys * 48]
+
+    if size + num_keys * 48 > data.len() {
+        return Err(anyhow!("Missing bytes"));
+    }
+
+    let encrypted_shares: Vec<Vec<u8>> = data[size..size + num_keys * 48]
         .chunks_exact(48)
-        .map(|chunk| chunk.try_into().unwrap())
+        .map(|chunk| chunk.to_vec())
         .collect();
 
     let encrypted_payload = &data[size + num_keys * 48..];

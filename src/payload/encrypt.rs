@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: CC0-1.0
 
 use anyhow::{Result, anyhow, ensure};
+use itertools::Itertools;
 use miniscript::{
     Threshold,
     descriptor::{Descriptor, DescriptorPublicKey},
 };
 use sha2::{Digest, Sha256};
 
-use super::cipher::{AuthenticatedCipher, KeyCipher};
+use super::cipher::{AuthenticatedCipher, KeyCipher, UnauthenticatedCipher};
 use super::descriptor_tree::{KeylessDescriptorTree, ToDescriptorTree};
 use super::shamir::{Share, reconstruct_secret, split_secret};
 
@@ -46,28 +47,25 @@ pub fn encrypt_with_authenticated_shards(
     nonce: Nonce,
     plaintext: Data,
 ) -> Result<(Vec<EncryptedShare>, Data)> {
-    let keyless_node = descriptor.to_tree().prune_keyless();
-
-    ensure!(keyless_node.is_some(), Error::NoKeysRequired);
-
     let cipher = AuthenticatedCipher {};
-    let encrypted_payload =
-        cipher.encrypt_payload(plaintext, master_encryption_key, nonce)?;
+    encrypt_with_cipher(cipher, descriptor, master_encryption_key, nonce, plaintext)
+}
 
-    let mut hasher = Sha256::new();
-    hasher.update(&encrypted_payload);
-    let hash = hasher.finalize();
-
-    let tree = ShamirTree::build_tree(
-        &keyless_node.unwrap(),
-        master_encryption_key.to_vec(),
-        &hash.as_slice().try_into().unwrap(),
-        &cipher,
-        &mut 0,
-    )?;
-
-    let encrypted_shares = tree.extract_encrypted_shares();
-    Ok((encrypted_shares, encrypted_payload))
+/// Identical to `encrypt_with_authenticatd_shards` except shares are encrypted without
+/// authentication using ChaCha20 and the payload is encrypted with authentication using
+/// ChaCha20Poly1305.
+///
+/// This provides full secrecy to encryption, as no information is gained unless the
+/// payload can be decrypted, at the cost of a combinatorial runtime to decrypt.
+#[allow(dead_code)]
+pub fn encrypt_with_full_secrecy(
+    descriptor: Descriptor<DescriptorPublicKey>,
+    master_encryption_key: [u8; 32],
+    nonce: Nonce,
+    plaintext: Data,
+) -> Result<(Vec<EncryptedShare>, Data)> {
+    let cipher = UnauthenticatedCipher {};
+    encrypt_with_cipher(cipher, descriptor, master_encryption_key, nonce, plaintext)
 }
 
 /// Reconstructs the master secret from its encrypted Shamir shares and decrypts the payload ciphertext.
@@ -101,9 +99,86 @@ pub fn decrypt_with_authenticated_shards(
         Error::TooManyShares
     }
 
-    let pks = public_keys.iter().map(|pk| Some(pk)).collect();
     let cipher = AuthenticatedCipher {};
+    let pks = public_keys.iter().map(|pk| Some(pk)).collect();
     tree.decrypt(pks, nonce, ciphertext, &cipher)
+}
+
+/// Decrypts a payload encrypted using `encrypt_with_full_secrecy` by trying all possible combinations
+/// of mappings of shares to keys, including to None. This is O((N+1)^K), where N is the number of keys
+/// and K is the number of shares.
+pub fn decrypt_with_full_secrecy(
+    descriptor: Descriptor<DescriptorPublicKey>,
+    encrypted_shares: Vec<EncryptedShare>,
+    public_keys: Vec<DescriptorPublicKey>,
+    nonce: Nonce,
+    ciphertext: Data,
+) -> Result<Data> {
+    let keyless_node = descriptor.to_tree().prune_keyless();
+
+    ensure!(keyless_node.is_some(), Error::NoKeysRequired);
+
+    let mut leaf_index = 0;
+    let tree =
+        ShamirTree::reconstruct_tree(&keyless_node.unwrap(), &encrypted_shares, &mut leaf_index)?;
+
+    ensure! {
+        leaf_index == encrypted_shares.len(),
+        Error::TooManyShares
+    }
+
+    let cipher = UnauthenticatedCipher {};
+    let num_slots = encrypted_shares.len();
+
+    // Each slot can hold any one of the provided public keys or None.
+    let mut choices_for_each_slot: Vec<Option<&DescriptorPublicKey>> =
+        public_keys.iter().map(Some).collect();
+    choices_for_each_slot.push(None);
+
+    // Create an iterator that will produce all combinations.
+    let combinations_iterator = std::iter::repeat(choices_for_each_slot.iter().cloned())
+        .take(num_slots)
+        .multi_cartesian_product();
+
+    // Iterate through each generated combination and attempt decryption.
+    for key_combination in combinations_iterator {
+        if let Ok(decrypted_payload) =
+            tree.decrypt(key_combination, nonce, ciphertext.clone(), &cipher)
+        {
+            return Ok(decrypted_payload);
+        }
+    }
+
+    Err(Error::NoSuitableCombination.into())
+}
+
+fn encrypt_with_cipher<T: KeyCipher>(
+    cipher: T,
+    descriptor: Descriptor<DescriptorPublicKey>,
+    master_encryption_key: [u8; 32],
+    nonce: Nonce,
+    plaintext: Data,
+) -> Result<(Vec<EncryptedShare>, Data)> {
+    let keyless_node = descriptor.to_tree().prune_keyless();
+
+    ensure!(keyless_node.is_some(), Error::NoKeysRequired);
+
+    let encrypted_payload = cipher.encrypt_payload(plaintext, master_encryption_key, nonce)?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&encrypted_payload);
+    let hash = hasher.finalize();
+
+    let tree = ShamirTree::build_tree(
+        &keyless_node.unwrap(),
+        master_encryption_key.to_vec(),
+        &hash.as_slice().try_into().unwrap(),
+        &cipher,
+        &mut 0,
+    )?;
+
+    let encrypted_shares = tree.extract_encrypted_shares();
+    Ok((encrypted_shares, encrypted_payload))
 }
 
 impl ShamirTree {
@@ -286,6 +361,8 @@ pub enum Error {
     InvalidShamir(String),
     /// Additional keys required to decrypt
     KeysRequired(usize),
+    /// Unable to decrypt with any combination of keys
+    NoSuitableCombination,
 }
 
 impl std::fmt::Display for Error {
@@ -297,6 +374,9 @@ impl std::fmt::Display for Error {
             Self::InvalidShamir(err) => write!(f, "invalid shamir: {err}"),
             Self::KeysRequired(num_required) => {
                 write!(f, "requires {num_required} additional key(s)")
+            }
+            Self::NoSuitableCombination => {
+                write!(f, "unable to decrypt with any combination of keys")
             }
         }
     }

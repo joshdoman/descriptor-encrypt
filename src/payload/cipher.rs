@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chacha20::{
     ChaCha20,
     cipher::{KeyIvInit, StreamCipher},
@@ -49,6 +49,8 @@ pub trait KeyCipher {
 
 pub struct AuthenticatedCipher {}
 
+pub struct UnauthenticatedCipher {}
+
 impl KeyCipher for AuthenticatedCipher {
     fn encrypt_payload(
         &self,
@@ -65,7 +67,7 @@ impl KeyCipher for AuthenticatedCipher {
         encryption_key: [u8; 32],
         nonce: [u8; 12],
     ) -> Result<Vec<u8>> {
-        Ok(apply_chacha20(payload, encryption_key, nonce))
+        Ok(apply_chacha20(encrypted_payload, encryption_key, nonce))
     }
 
     fn encrypt_share(
@@ -75,7 +77,10 @@ impl KeyCipher for AuthenticatedCipher {
         hash: &[u8; 32],
         index: usize,
     ) -> Result<Vec<u8>> {
-        let (nonce, cipher) = get_chacha20_poly1305_cipher(pk, hash, index)?;
+        let encryption_key = get_encryption_key(pk, hash, index);
+        // We can safely use a zero nonce because the key is unique to the ciphertext and index
+        let nonce = [0u8; 12];
+        let (nonce, cipher) = get_chacha20_poly1305_cipher(encryption_key, nonce)?;
         let encrypted_share = cipher
             .encrypt(&nonce, share.as_ref())
             .map_err(|e| anyhow::anyhow!("ChaCha20Poly1305 encryption error: {:?}", e))?;
@@ -94,7 +99,9 @@ impl KeyCipher for AuthenticatedCipher {
             let Some(pk) = pk else {
                 continue;
             };
-            let Ok((nonce, cipher)) = get_chacha20_poly1305_cipher(pk, hash, index) else {
+            let encryption_key = get_encryption_key(pk, hash, index);
+            let nonce = [0u8; 12];
+            let Ok((nonce, cipher)) = get_chacha20_poly1305_cipher(encryption_key, nonce) else {
                 continue;
             };
             let Ok(share) = cipher.decrypt(&nonce, encrypted_share.as_ref()) else {
@@ -108,11 +115,69 @@ impl KeyCipher for AuthenticatedCipher {
     }
 }
 
-fn apply_chacha20(
-    plaintext: Vec<u8>,
-    encryption_key: [u8; 32],
-    nonce: [u8; 12],
-) -> Vec<u8> {
+impl KeyCipher for UnauthenticatedCipher {
+    fn encrypt_payload(
+        &self,
+        payload: Vec<u8>,
+        encryption_key: [u8; 32],
+        nonce: [u8; 12],
+    ) -> Result<Vec<u8>> {
+        let (nonce, cipher) = get_chacha20_poly1305_cipher(encryption_key, nonce)?;
+        let encrypted_payload = cipher
+            .encrypt(&nonce, payload.as_ref())
+            .map_err(|e| anyhow::anyhow!("ChaCha20Poly1305 encryption error: {:?}", e))?;
+
+        Ok(encrypted_payload.as_slice().try_into().unwrap())
+    }
+
+    fn decrypt_payload(
+        &self,
+        encrypted_payload: Vec<u8>,
+        encryption_key: [u8; 32],
+        nonce: [u8; 12],
+    ) -> Result<Vec<u8>> {
+        let (nonce, cipher) = get_chacha20_poly1305_cipher(encryption_key, nonce)?;
+        cipher
+            .decrypt(&nonce, encrypted_payload.as_ref())
+            .map_err(|e| anyhow::anyhow!("ChaCha20Poly1305 decryption error: {:?}", e))
+    }
+
+    fn encrypt_share(
+        &self,
+        share: Vec<u8>,
+        pk: &DescriptorPublicKey,
+        hash: &[u8; 32],
+        index: usize,
+    ) -> Result<Vec<u8>> {
+        let encryption_key = get_encryption_key(pk, hash, index);
+        let nonce = [0u8; 12];
+
+        Ok(apply_chacha20(share, encryption_key, nonce))
+    }
+
+    fn decrypt_share(
+        &self,
+        encrypted_share: Vec<u8>,
+        pks: &Vec<Option<&DescriptorPublicKey>>,
+        hash: &[u8; 32],
+        index: usize,
+    ) -> Result<Vec<u8>> {
+        if index >= pks.len() {
+            return Err(anyhow!("Insufficient keys"));
+        }
+
+        let Some(pk) = pks[index] else {
+            return Err(anyhow!("No key exists at index {}", index));
+        };
+
+        let encryption_key = get_encryption_key(pk, hash, index);
+        let nonce = [0u8; 12];
+
+        Ok(apply_chacha20(encrypted_share, encryption_key, nonce))
+    }
+}
+
+fn apply_chacha20(plaintext: Vec<u8>, encryption_key: [u8; 32], nonce: [u8; 12]) -> Vec<u8> {
     let mut cipher = ChaCha20::new(&encryption_key.into(), &nonce.into());
     let mut buffer = plaintext.clone();
     cipher.apply_keystream(&mut buffer);
@@ -120,14 +185,9 @@ fn apply_chacha20(
 }
 
 fn get_chacha20_poly1305_cipher(
-    pk: &DescriptorPublicKey,
-    hash: &[u8; 32],
-    index: usize,
+    encryption_key: [u8; 32],
+    nonce: [u8; 12],
 ) -> Result<(chacha20poly1305::Nonce, ChaCha20Poly1305)> {
-    let encryption_key = get_encryption_key(pk, hash, index);
-
-    // We can safely use a zero nonce because the key is unique to the ciphertext and index
-    let nonce = [0u8; 12];
     let nonce = chacha20poly1305::Nonce::from_slice(&nonce);
     let cipher = ChaCha20Poly1305::new_from_slice(&encryption_key)
         .map_err(|e| anyhow::anyhow!("ChaCha20Poly1305 key error: {:?}", e))?;

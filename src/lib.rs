@@ -132,11 +132,27 @@ use sha2::{Digest, Sha256};
 
 use crate::payload::ToDescriptorTree;
 
-const V0: u8 = 0u8;
+const V0: u8 = 0;
+const V1: u8 = 1;
 
 /// Encrypts a descriptor such that it can only be recovered by a set of
 /// keys with access to the funds.
 pub fn encrypt(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
+    encrypt_with_version(V0, desc)
+}
+
+/// Identical to `encrypt` except it provides full secrecy during encryption. as no
+/// information is gained unless the descriptor can be decrypted.
+///
+/// Tradeoffs:
+/// - More private: no information is revealed from partial decryptions
+/// - Slower to decrypt: must try all possible combinations of keys. This is O((N+1)^K),
+///  where N is the number of keys and K is the number of shares.
+pub fn encrypt_with_full_secrecy(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
+    encrypt_with_version(V1, desc)
+}
+
+fn encrypt_with_version(version: u8, desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
     let (template, payload) = template::encode(desc.clone());
 
     // Deterministically derive encryption key
@@ -147,11 +163,16 @@ pub fn encrypt(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
 
     // Encrypt payload and shard encryption key into encrypted shares (1 per key)
     let nonce = [0u8; 12];
-    let (encrypted_shares, encrypted_payload) =
-        payload::encrypt_with_authenticated_shards(desc, encryption_key.into(), nonce, payload)?;
+    let (encrypted_shares, encrypted_payload) = match version {
+        V0 => {
+            payload::encrypt_with_authenticated_shards(desc, encryption_key.into(), nonce, payload)?
+        }
+        V1 => payload::encrypt_with_full_secrecy(desc, encryption_key.into(), nonce, payload)?,
+        _ => return Err(anyhow!("Unsupported version: {}", version)),
+    };
 
     Ok([
-        vec![V0],
+        vec![version],
         template,
         encrypted_shares.concat(),
         encrypted_payload,
@@ -168,9 +189,10 @@ pub fn decrypt(
         return Err(anyhow!("Empty data"));
     }
 
-    let data = match data[0] {
-        V0 => &data[1..],
-        _ => return Err(anyhow!("Unsupported version: {}", data[0])),
+    let version = data[0];
+    let data = match version {
+        V0 | V1 => &data[1..],
+        _ => return Err(anyhow!("Unsupported version: {}", version)),
     };
 
     let (template, size) = template::decode(data)?;
@@ -189,13 +211,23 @@ pub fn decrypt(
     let encrypted_payload = &data[size + num_keys * 48..];
 
     let nonce = [0u8; 12];
-    let payload = payload::decrypt_with_authenticated_shards(
-        template.clone(),
-        encrypted_shares,
-        pks,
-        nonce,
-        encrypted_payload.to_vec(),
-    )?;
+    let payload = match version {
+        V0 => payload::decrypt_with_authenticated_shards(
+            template.clone(),
+            encrypted_shares,
+            pks,
+            nonce,
+            encrypted_payload.to_vec(),
+        )?,
+        V1 => payload::decrypt_with_full_secrecy(
+            template.clone(),
+            encrypted_shares,
+            pks,
+            nonce,
+            encrypted_payload.to_vec(),
+        )?,
+        _ => unreachable!("unsupported version"),
+    };
 
     let desc = template::decode_with_payload(data, &payload)?;
 

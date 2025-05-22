@@ -369,23 +369,24 @@ mod tests {
     // Helper to get plaintext, ciphertext, and encrypted shares
     fn get_encrypted_data(
         descriptor: Descriptor<DescriptorPublicKey>,
-    ) -> Result<(Vec<EncryptedShare>, Data, Data)> {
+    ) -> (Vec<EncryptedShare>, Data, Data) {
         let master_key = [1u8; 32];
         let plaintext: Data = b"This is test plaintext".to_vec();
 
         let (shares, ciphertext) =
-            encrypt_payload_and_shard_key(descriptor, master_key, NONCE_VALUE, plaintext.clone())?;
+            encrypt_payload_and_shard_key(descriptor, master_key, NONCE_VALUE, plaintext.clone())
+                .unwrap();
 
-        Ok((shares, plaintext, ciphertext))
+        (shares, plaintext, ciphertext)
     }
 
     #[test]
-    fn test_single_key_encryption() -> Result<()> {
+    fn test_single_key_encryption() {
         let pubkey_val = create_test_key(1);
         let desc_str = format!("wpkh({})", pubkey_val);
-        let descriptor = Descriptor::<DescriptorPublicKey>::from_str(&desc_str)?;
+        let descriptor = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let (shares, plaintext, ciphertext) = get_encrypted_data(descriptor.clone())?;
+        let (shares, plaintext, ciphertext) = get_encrypted_data(descriptor.clone());
 
         assert_eq!(
             shares.len(),
@@ -399,7 +400,8 @@ mod tests {
             vec![pubkey_val.clone()],
             NONCE_VALUE,
             ciphertext.clone(),
-        )?;
+        )
+        .unwrap();
 
         assert_eq!(
             decrypted_plaintext, plaintext,
@@ -416,15 +418,13 @@ mod tests {
             ciphertext,
         );
         assert!(result.is_err(), "Decryption should fail with wrong key");
-
-        Ok(())
     }
 
     #[test]
-    fn test_multi_key_threshold_1of2() -> Result<()> {
+    fn test_multi_key_threshold_1of2() {
         let (descriptor, pubkeys_vec) = create_threshold_descriptor(1, 2);
 
-        let (shares, plaintext, ciphertext) = get_encrypted_data(descriptor.clone())?;
+        let (shares, plaintext, ciphertext) = get_encrypted_data(descriptor.clone());
 
         assert_eq!(shares.len(), 2, "1-of-2 multisig should produce 2 shares");
 
@@ -437,20 +437,21 @@ mod tests {
                 key_subset_vec,
                 NONCE_VALUE,
                 ciphertext.clone(),
-            )?;
+            )
+            .unwrap();
+
             assert_eq!(
                 decrypted_plaintext, plaintext,
                 "Decrypted plaintext doesn't match original"
             );
         }
-        Ok(())
     }
 
     #[test]
-    fn test_multi_key_threshold_2of3() -> Result<()> {
+    fn test_multi_key_threshold_2of3() {
         let (descriptor, pubkeys_vec) = create_threshold_descriptor(2, 3);
 
-        let (shares, plaintext, ciphertext) = get_encrypted_data(descriptor.clone())?;
+        let (shares, plaintext, ciphertext) = get_encrypted_data(descriptor.clone());
 
         assert_eq!(shares.len(), 3, "2-of-3 multisig should produce 3 shares");
 
@@ -464,7 +465,9 @@ mod tests {
                     key_subset_vec,
                     NONCE_VALUE,
                     ciphertext.clone(),
-                )?;
+                )
+                .unwrap();
+
                 assert_eq!(
                     decrypted_plaintext, plaintext,
                     "Decrypted plaintext doesn't match original"
@@ -482,19 +485,19 @@ mod tests {
                 NONCE_VALUE,
                 ciphertext.clone(),
             );
+
             assert!(
                 result.is_err(),
                 "Decryption should fail with only 1 key for 2-of-3"
             );
         }
-        Ok(())
     }
 
     #[test]
-    fn test_multi_key_threshold_3of5() -> Result<()> {
+    fn test_multi_key_threshold_3of5() {
         let (descriptor, pubkeys) = create_threshold_descriptor(3, 5);
 
-        let (shares, plaintext, ciphertext) = get_encrypted_data(descriptor.clone())?;
+        let (shares, plaintext, ciphertext) = get_encrypted_data(descriptor.clone());
 
         assert_eq!(shares.len(), 5, "3-of-5 multisig should produce 5 shares");
 
@@ -505,7 +508,9 @@ mod tests {
             key_subset_exact,
             NONCE_VALUE,
             ciphertext.clone(),
-        )?;
+        )
+        .unwrap();
+
         assert_eq!(
             decrypted_exact, plaintext,
             "Decrypted plaintext doesn't match original with exact keys"
@@ -523,7 +528,9 @@ mod tests {
             key_subset_more,
             NONCE_VALUE,
             ciphertext.clone(),
-        )?;
+        )
+        .unwrap();
+
         assert_eq!(
             decrypted_more, plaintext,
             "Decrypted plaintext doesn't match original with more keys"
@@ -537,16 +544,15 @@ mod tests {
             NONCE_VALUE,
             ciphertext.clone(),
         );
+
         assert!(
             decrypted_less.is_err(),
             "Decryption should fail with only 2 keys for 3-of-5"
         );
-
-        Ok(())
     }
 
     #[test]
-    fn test_nested_thresholds() -> Result<()> {
+    fn test_nested_thresholds() {
         let key1 = create_test_key(1);
         let key2 = create_test_key(2);
         let key3 = create_test_key(3);
@@ -556,9 +562,9 @@ mod tests {
             "wsh(thresh(2,or_d(pk({}),pk({})),s:pk({}),s:pk({})))",
             key1, key2, key3, key4
         );
-        let descriptor = Descriptor::<DescriptorPublicKey>::from_str(&desc_str)?;
+        let descriptor = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let (shares, plaintext, ciphertext) = get_encrypted_data(descriptor.clone())?;
+        let (shares, plaintext, ciphertext) = get_encrypted_data(descriptor.clone());
         assert_eq!(shares.len(), 4, "Nested thresholds should produce 4 shares");
 
         // Test case 1: key3 + key4 (satisfies outer threshold)
@@ -569,7 +575,8 @@ mod tests {
             key_subset1,
             NONCE_VALUE,
             ciphertext.clone(),
-        )?;
+        )
+        .unwrap();
         assert_eq!(decrypted1, plaintext, "Mismatch for key3 + key4");
 
         // Test case 2: key1 + key3 (key1 from inner, key3 from outer)
@@ -580,7 +587,8 @@ mod tests {
             key_subset2,
             NONCE_VALUE,
             ciphertext.clone(),
-        )?;
+        )
+        .unwrap();
         assert_eq!(decrypted2, plaintext, "Mismatch for key1 + key3");
 
         // Test case 3: key1 + key4 (key1 from inner, key4 from outer)
@@ -591,7 +599,8 @@ mod tests {
             key_subset2,
             NONCE_VALUE,
             ciphertext.clone(),
-        )?;
+        )
+        .unwrap();
         assert_eq!(decrypted2, plaintext, "Mismatch for key1 + key3");
 
         // Test case 4: key2 + key3 (key2 from inner, key3 from outer)
@@ -602,7 +611,8 @@ mod tests {
             key_subset2,
             NONCE_VALUE,
             ciphertext.clone(),
-        )?;
+        )
+        .unwrap();
         assert_eq!(decrypted2, plaintext, "Mismatch for key1 + key3");
 
         // Test case 5: only key3 (insufficient)
@@ -632,15 +642,13 @@ mod tests {
             decrypted_insufficient2.is_err(),
             "Decryption should fail with only inner threshold keys (key1+key2)"
         );
-
-        Ok(())
     }
 
     #[test]
-    fn test_reconstruction_with_incorrect_shares_content() -> Result<()> {
+    fn test_reconstruction_with_incorrect_shares_content() {
         let (descriptor, pubkeys) = create_threshold_descriptor(2, 3);
 
-        let (mut shares, _, ciphertext) = get_encrypted_data(descriptor.clone())?;
+        let (mut shares, _, ciphertext) = get_encrypted_data(descriptor.clone());
 
         // Corrupt one of the shares
         if !shares.is_empty() {
@@ -660,14 +668,12 @@ mod tests {
             decrypted_plaintext.is_err(),
             "Decryption should fail when share content is corrupted leading to incorrect secret reconstruction"
         );
-
-        Ok(())
     }
 
     #[test]
-    fn test_error_conditions() -> Result<()> {
+    fn test_error_conditions() {
         // Test 1: A keyless descriptor for encryption
-        let desc_pk_keyless = Descriptor::<DescriptorPublicKey>::from_str("wsh(1)")?;
+        let desc_pk_keyless = Descriptor::<DescriptorPublicKey>::from_str("wsh(1)").unwrap();
         let master_key = [1u8; 32];
         let p_text: Data = b"Test".to_vec();
 
@@ -683,7 +689,7 @@ mod tests {
         );
 
         let (valid_descriptor, pubkeys_valid) = create_threshold_descriptor(1, 1);
-        let (shares_valid, _, ciphertext_valid) = get_encrypted_data(valid_descriptor.clone())?;
+        let (shares_valid, _, ciphertext_valid) = get_encrypted_data(valid_descriptor.clone());
 
         // Test 2: Recover with too few shares
         let (desc_2_of_3, keys_2_of_3) = create_threshold_descriptor(2, 3);
@@ -724,7 +730,5 @@ mod tests {
             result.is_err(),
             "Decryption should fail with wrong ciphertext"
         );
-
-        Ok(())
     }
 }

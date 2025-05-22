@@ -17,7 +17,7 @@ pub trait KeyCipher {
         index: usize,
     ) -> Result<Vec<u8>>;
 
-    /// Returns plaintext decrypted from ciphertext using a set of public keys, a derivation hash, and an index
+    /// Returns plaintext decrypted using a set of public keys, a derivation hash, and an index
     fn decrypt(
         &self,
         ciphertext: Vec<u8>,

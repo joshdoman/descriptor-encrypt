@@ -78,7 +78,8 @@ fn handle_encrypt(args: EncryptArgs) -> Result<()> {
         .context("Failed to parse descriptor string")?;
 
     let encrypted_data = if args.with_full_secrecy {
-        descriptor_encrypt::encrypt_with_full_secrecy(desc).context("Encryption with full secrecy failed")?
+        descriptor_encrypt::encrypt_with_full_secrecy(desc)
+            .context("Encryption with full secrecy failed")?
     } else {
         descriptor_encrypt::encrypt(desc).context("Encryption failed")?
     };

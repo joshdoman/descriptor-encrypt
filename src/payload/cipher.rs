@@ -163,7 +163,7 @@ impl KeyCipher for UnauthenticatedCipher {
         index: usize,
     ) -> Result<Vec<u8>> {
         if index >= pks.len() {
-            return Err(anyhow!("Insufficient keys"));
+            return Err(anyhow!("Insufficient keys for index {}", index));
         }
 
         let Some(pk) = pks[index] else {
@@ -490,6 +490,322 @@ mod tests {
         assert_ne!(
             ciphertext1, ciphertext2,
             "Ciphertexts should differ if indices differ."
+        );
+    }
+
+    // UnauthenticatedCipher Tests
+
+    #[test]
+    fn test_encrypt_decrypt_cycle_succeeds_unauthenticated() {
+        let cipher = UnauthenticatedCipher {};
+        let pk = create_test_pk(101);
+        let hash = create_dummy_hash(101);
+        let index = 0_usize;
+        let plaintext = b"unauth secret message".to_vec();
+
+        let ciphertext = cipher
+            .encrypt_share(plaintext.clone(), &pk, &hash, index)
+            .unwrap();
+
+        let decrypted_plaintext = cipher
+            .decrypt_share(ciphertext, &vec![Some(&pk)], &hash, index)
+            .unwrap();
+
+        assert_eq!(
+            decrypted_plaintext, plaintext,
+            "Unauthenticated decrypted plaintext should match original."
+        );
+    }
+
+    #[test]
+    fn test_decrypt_unauthenticated_with_wrong_public_key_at_index_garbles() {
+        let cipher = UnauthenticatedCipher {};
+        let pk1_enc = create_test_pk(102);
+        let pk2_dec = create_test_pk(103);
+        let hash = create_dummy_hash(102);
+        let index = 0_usize;
+        let plaintext = b"unauth wrong pk".to_vec();
+
+        let ciphertext = cipher
+            .encrypt_share(plaintext.clone(), &pk1_enc, &hash, index)
+            .unwrap();
+
+        let decrypted_plaintext = cipher
+            .decrypt_share(ciphertext, &vec![Some(&pk2_dec)], &hash, index)
+            .unwrap();
+
+        assert_ne!(
+            decrypted_plaintext, plaintext,
+            "Unauthenticated decryption with wrong PK at index should produce different data."
+        );
+    }
+
+    #[test]
+    fn test_decrypt_unauthenticated_with_wrong_hash_garbles() {
+        let cipher = UnauthenticatedCipher {};
+        let pk = create_test_pk(104);
+        let hash1_enc = create_dummy_hash(103);
+        let hash2_dec = create_dummy_hash(104);
+        let index = 0_usize;
+        let plaintext = b"unauth wrong hash".to_vec();
+
+        let ciphertext = cipher
+            .encrypt_share(plaintext.clone(), &pk, &hash1_enc, index)
+            .unwrap();
+
+        let decrypted_plaintext = cipher
+            .decrypt_share(ciphertext, &vec![Some(&pk)], &hash2_dec, index)
+            .unwrap();
+
+        assert_ne!(
+            decrypted_plaintext, plaintext,
+            "Unauthenticated decryption with wrong hash should produce different data."
+        );
+    }
+
+    #[test]
+    fn test_decrypt_unauthenticated_with_wrong_index_param_garbles() {
+        let cipher = UnauthenticatedCipher {};
+        let pk = create_test_pk(105);
+        let hash = create_dummy_hash(105);
+        let index1_enc = 0_usize;
+        let index2_dec = 1_usize;
+        let plaintext = b"unauth wrong index param".to_vec();
+
+        let ciphertext = cipher
+            .encrypt_share(plaintext.clone(), &pk, &hash, index1_enc)
+            .unwrap();
+
+        let pks_for_decryption = if index2_dec == 0 {
+            vec![Some(&pk)]
+        } else {
+            vec![None, Some(&pk)]
+        };
+
+        let decrypted_plaintext = cipher
+            .decrypt_share(ciphertext, &pks_for_decryption, &hash, index2_dec)
+            .unwrap();
+
+        assert_ne!(
+            decrypted_plaintext, plaintext,
+            "Unauthenticated decryption with wrong index parameter should produce different data."
+        );
+    }
+
+    #[test]
+    fn test_decrypt_unauthenticated_with_correct_pk_at_specified_index_succeeds() {
+        let cipher = UnauthenticatedCipher {};
+        let pk_correct = create_test_pk(110);
+        let pk_other = create_test_pk(111);
+        let hash = create_dummy_hash(110);
+        let encrypt_idx = 1_usize;
+        let decrypt_idx = 1_usize;
+        let plaintext = b"unauth correct pk at index".to_vec();
+
+        let ciphertext = cipher
+            .encrypt_share(plaintext.clone(), &pk_correct, &hash, encrypt_idx)
+            .unwrap();
+
+        let pks_list = vec![Some(&pk_other), Some(&pk_correct), Some(&pk_other)];
+        let decrypted_plaintext = cipher
+            .decrypt_share(ciphertext, &pks_list, &hash, decrypt_idx)
+            .unwrap();
+
+        assert_eq!(
+            decrypted_plaintext, plaintext,
+            "Unauthenticated decryption should succeed if correct PK is at specified index."
+        );
+    }
+
+    #[test]
+    fn test_decrypt_unauthenticated_with_wrong_pk_at_specified_index_garbles() {
+        let cipher = UnauthenticatedCipher {};
+        let pk_encrypt = create_test_pk(112);
+        let pk_decrypt_wrong = create_test_pk(113);
+        let pk_other = create_test_pk(114);
+        let hash = create_dummy_hash(111);
+        let encrypt_idx = 0_usize;
+        let decrypt_idx = 0_usize;
+        let plaintext = b"unauth wrong pk at index".to_vec();
+
+        let ciphertext = cipher
+            .encrypt_share(plaintext.clone(), &pk_encrypt, &hash, encrypt_idx)
+            .unwrap();
+
+        let pks_list = vec![Some(&pk_decrypt_wrong), Some(&pk_other)];
+        let decrypted_plaintext = cipher
+            .decrypt_share(ciphertext, &pks_list, &hash, decrypt_idx)
+            .unwrap();
+
+        assert_ne!(
+            decrypted_plaintext, plaintext,
+            "Unauthenticated decryption with wrong PK at specified index should garble."
+        );
+    }
+
+    #[test]
+    fn test_empty_plaintext_encrypt_decrypt_succeeds_unauthenticated() {
+        let cipher = UnauthenticatedCipher {};
+        let pk = create_test_pk(130);
+        let hash = create_dummy_hash(130);
+        let index = 0_usize;
+        let plaintext = Vec::new();
+
+        let ciphertext = cipher
+            .encrypt_share(plaintext.clone(), &pk, &hash, index)
+            .unwrap();
+
+        let decrypted_plaintext = cipher
+            .decrypt_share(ciphertext, &vec![Some(&pk)], &hash, index)
+            .unwrap();
+
+        assert_eq!(
+            decrypted_plaintext, plaintext,
+            "Unauthenticated encryption/decryption of empty plaintext should work."
+        );
+    }
+
+    #[test]
+    fn test_decrypt_unauthenticated_with_empty_pk_list_fails() {
+        let cipher = UnauthenticatedCipher {};
+        let pk_correct = create_test_pk(140);
+        let hash = create_dummy_hash(140);
+        let index_enc = 0_usize;
+        let index_dec = 0_usize;
+        let plaintext = b"unauth no keys".to_vec();
+
+        let ciphertext = cipher
+            .encrypt_share(plaintext.clone(), &pk_correct, &hash, index_enc)
+            .unwrap();
+
+        let pks_list_empty: Vec<Option<&DescriptorPublicKey>> = Vec::new();
+        let result = cipher.decrypt_share(ciphertext, &pks_list_empty, &hash, index_dec);
+
+        assert!(
+            result.is_err(),
+            "Unauthenticated decryption should fail if PK list is empty and index is accessed."
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!("Insufficient keys for index {}", index_dec)
+        );
+    }
+
+    #[test]
+    fn test_decrypt_unauthenticated_with_out_of_bounds_index_fails() {
+        let cipher = UnauthenticatedCipher {};
+        let pk = create_test_pk(141);
+        let hash = create_dummy_hash(141);
+        let index_enc = 0_usize;
+        let index_dec = 1_usize;
+        let plaintext = b"unauth out of bounds".to_vec();
+
+        let ciphertext = cipher
+            .encrypt_share(plaintext.clone(), &pk, &hash, index_enc)
+            .unwrap();
+
+        let pks_list = vec![Some(&pk)];
+        let result = cipher.decrypt_share(ciphertext, &pks_list, &hash, index_dec);
+
+        assert!(
+            result.is_err(),
+            "Unauthenticated decryption should fail for out-of-bounds index."
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!("Insufficient keys for index {}", index_dec)
+        );
+    }
+
+    #[test]
+    fn test_decrypt_unauthenticated_with_none_pk_at_index_fails() {
+        let cipher = UnauthenticatedCipher {};
+        let pk_enc = create_test_pk(142);
+        let hash = create_dummy_hash(142);
+        let index_enc = 0_usize;
+        let index_dec = 0_usize;
+        let plaintext = b"unauth none pk".to_vec();
+
+        let ciphertext = cipher
+            .encrypt_share(plaintext.clone(), &pk_enc, &hash, index_enc)
+            .unwrap();
+
+        let pks_list = vec![None];
+        let result = cipher.decrypt_share(ciphertext, &pks_list, &hash, index_dec);
+
+        assert!(
+            result.is_err(),
+            "Unauthenticated decryption should fail if PK at index is None."
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!("No key exists at index {}", index_dec)
+        );
+    }
+
+    #[test]
+    fn test_different_pks_produce_different_ciphertexts_unauthenticated() {
+        let cipher = UnauthenticatedCipher {};
+        let pk1 = create_test_pk(151);
+        let pk2 = create_test_pk(152);
+        let hash = create_dummy_hash(150);
+        let index = 0_usize;
+        let plaintext = b"unauth same data, diff key".to_vec();
+
+        let ciphertext1 = cipher
+            .encrypt_share(plaintext.clone(), &pk1, &hash, index)
+            .unwrap();
+        let ciphertext2 = cipher
+            .encrypt_share(plaintext.clone(), &pk2, &hash, index)
+            .unwrap();
+
+        assert_ne!(
+            ciphertext1, ciphertext2,
+            "Unauthenticated ciphertexts should differ if public keys differ."
+        );
+    }
+
+    #[test]
+    fn test_different_hashes_produce_different_ciphertexts_unauthenticated() {
+        let cipher = UnauthenticatedCipher {};
+        let pk = create_test_pk(160);
+        let hash1 = create_dummy_hash(160);
+        let hash2 = create_dummy_hash(161);
+        let index = 0_usize;
+        let plaintext = b"unauth same data, diff hash".to_vec();
+
+        let ciphertext1 = cipher
+            .encrypt_share(plaintext.clone(), &pk, &hash1, index)
+            .unwrap();
+        let ciphertext2 = cipher
+            .encrypt_share(plaintext.clone(), &pk, &hash2, index)
+            .unwrap();
+
+        assert_ne!(
+            ciphertext1, ciphertext2,
+            "Unauthenticated ciphertexts should differ if hashes differ."
+        );
+    }
+
+    #[test]
+    fn test_different_indices_produce_different_ciphertexts_unauthenticated() {
+        let cipher = UnauthenticatedCipher {};
+        let pk = create_test_pk(170);
+        let hash = create_dummy_hash(170);
+        let index1 = 0_usize;
+        let index2 = 1_usize;
+        let plaintext = b"unauth same data, diff index".to_vec();
+
+        let ciphertext1 = cipher
+            .encrypt_share(plaintext.clone(), &pk, &hash, index1)
+            .unwrap();
+        let ciphertext2 = cipher
+            .encrypt_share(plaintext.clone(), &pk, &hash, index2)
+            .unwrap();
+
+        assert_ne!(
+            ciphertext1, ciphertext2,
+            "Unauthenticated ciphertexts should differ if indices differ."
         );
     }
 }

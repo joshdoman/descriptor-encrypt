@@ -57,6 +57,9 @@ The executable will be located at `target/release/descriptor-encrypt`.
     **Arguments**:
     *   `<DESCRIPTOR_STRING>`: The Bitcoin descriptor string to encrypt.
 
+    **Options**:
+    *   `-w, --with-full-secrecy`: Enable full secrecy mode, which leaks no information about key inclusion without full decryption.
+
 *   #### Decrypt a Descriptor
     Decrypts Base64-encoded encrypted descriptor data using a set of public keys.
     ```bash
@@ -91,6 +94,11 @@ The core logic of `descriptor-encrypt` can also be used as a library in other Ru
 **`encrypt(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>>`**
     
 * Encrypts a descriptor such that it can only be recovered by a set of keys with access to the funds.
+
+**`encrypt_with_full_secrecy(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>>`**
+
+* Identical to `encrypt` except it leaks no information about key inclusion without full decryption.
+* Provides maximum privacy but slower to decrypt, as we must try all possible combinations of shares and keys. This has a running time of $O((N+1)^K)$, where $N$ is the number of provided keys and $K$ is the number of shares.
 
 **`decrypt(data: &[u8], pks: Vec<DescriptorPublicKey>) -> Result<Descriptor<DescriptorPublicKey>>`**
 

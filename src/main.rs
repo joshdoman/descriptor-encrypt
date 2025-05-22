@@ -21,7 +21,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Encrypts a Bitcoin descriptor, outputs Base64
+    /// Encrypts a Bitcoin descriptor, outputs Base64 (use -w or --with-full-secrecy for maximum privacy)
     Encrypt(EncryptArgs),
     /// Decrypts a Base64-encoded encrypted descriptor
     Decrypt(DecryptArgs),
@@ -35,6 +35,9 @@ enum Commands {
 struct EncryptArgs {
     /// The Bitcoin descriptor string to encrypt
     descriptor: String,
+    /// Enable full secrecy mode, which leaks no information about key inclusion without full decryption.
+    #[clap(short, long)]
+    with_full_secrecy: bool,
 }
 
 #[derive(Args)]
@@ -74,7 +77,12 @@ fn handle_encrypt(args: EncryptArgs) -> Result<()> {
     let desc = Descriptor::<DescriptorPublicKey>::from_str(&args.descriptor)
         .context("Failed to parse descriptor string")?;
 
-    let encrypted_data = descriptor_encrypt::encrypt(desc).context("Encryption failed")?;
+    let encrypted_data = if args.with_full_secrecy {
+        descriptor_encrypt::encrypt_with_full_secrecy(desc)
+            .context("Encryption with full secrecy failed")?
+    } else {
+        descriptor_encrypt::encrypt(desc).context("Encryption failed")?
+    };
 
     println!("{}", BASE64_STANDARD.encode(encrypted_data));
 

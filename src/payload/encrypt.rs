@@ -107,8 +107,9 @@ pub fn decrypt_with_authenticated_shards(
         Error::TooManyShares
     }
 
+    let pks = public_keys.iter().map(|pk| Some(pk)).collect();
     let cipher = AuthenticatedCipher {};
-    tree.decrypt(public_keys, nonce, ciphertext, &cipher)
+    tree.decrypt(pks, nonce, ciphertext, &cipher)
 }
 
 impl ShamirTree {
@@ -187,7 +188,7 @@ impl ShamirTree {
     /// Decrypts ciphertext reassembling the master secret using a list of public keys
     fn decrypt<T: KeyCipher>(
         &self,
-        keys: Vec<DescriptorPublicKey>,
+        keys: Vec<Option<&DescriptorPublicKey>>,
         nonce: Nonce,
         ciphertext: Data,
         cipher: &T,
@@ -218,7 +219,7 @@ impl ShamirTree {
     /// Helper function to decrypt tree of encrypted shamir shares
     fn decrypt_tree<T: KeyCipher>(
         &self,
-        keys: &Vec<DescriptorPublicKey>,
+        keys: &Vec<Option<&DescriptorPublicKey>>,
         hash: &[u8; 32],
         cipher: &T,
         leaf_index: &mut usize,

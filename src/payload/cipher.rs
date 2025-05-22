@@ -21,7 +21,7 @@ pub trait KeyCipher {
     fn decrypt(
         &self,
         ciphertext: Vec<u8>,
-        pks: &Vec<DescriptorPublicKey>,
+        pks: &Vec<Option<&DescriptorPublicKey>>,
         hash: &[u8; 32],
         index: usize,
     ) -> Option<Vec<u8>>;
@@ -48,11 +48,14 @@ impl KeyCipher for AuthenticatedCipher {
     fn decrypt(
         &self,
         ciphertext: Vec<u8>,
-        pks: &Vec<DescriptorPublicKey>,
+        pks: &Vec<Option<&DescriptorPublicKey>>,
         hash: &[u8; 32],
         index: usize,
     ) -> Option<Vec<u8>> {
         for pk in pks {
+            let Some(pk) = pk else {
+                continue;
+            };
             let Ok((nonce, cipher)) = get_chacha20_poly1305_cipher(pk, hash, index) else {
                 continue;
             };
@@ -154,7 +157,7 @@ mod tests {
             .encrypt(plaintext.clone(), &pk, &hash, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![pk], &hash, index);
+        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![Some(&pk)], &hash, index);
 
         assert_eq!(
             decrypted_plaintext,
@@ -176,7 +179,7 @@ mod tests {
             .encrypt(plaintext.clone(), &pk1, &hash, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![pk2], &hash, index);
+        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![Some(&pk2)], &hash, index);
 
         assert_eq!(
             decrypted_plaintext, None,
@@ -197,7 +200,7 @@ mod tests {
             .encrypt(plaintext.clone(), &pk, &hash1, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![pk], &hash2, index);
+        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![Some(&pk)], &hash2, index);
 
         assert_eq!(
             decrypted_plaintext, None,
@@ -218,7 +221,7 @@ mod tests {
             .encrypt(plaintext.clone(), &pk, &hash, index1)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![pk], &hash, index2);
+        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![Some(&pk)], &hash, index2);
 
         assert_eq!(
             decrypted_plaintext, None,
@@ -240,7 +243,7 @@ mod tests {
             .encrypt(plaintext.clone(), &pk_correct, &hash, index)
             .unwrap();
 
-        let pks_list = vec![pk_wrong1, pk_correct, pk_wrong2];
+        let pks_list = vec![Some(&pk_wrong1), Some(&pk_correct), Some(&pk_wrong2)];
         let decrypted_plaintext = cipher.decrypt(ciphertext, &pks_list, &hash, index);
 
         assert_eq!(
@@ -264,7 +267,7 @@ mod tests {
             .encrypt(plaintext.clone(), &pk_correct, &hash, index)
             .unwrap();
 
-        let pks_list = vec![pk_wrong1, pk_wrong2];
+        let pks_list = vec![Some(&pk_wrong1), Some(&pk_wrong2)];
         let decrypted_plaintext = cipher.decrypt(ciphertext, &pks_list, &hash, index);
 
         assert_eq!(
@@ -285,7 +288,7 @@ mod tests {
             .encrypt(plaintext.clone(), &pk, &hash, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![pk], &hash, index);
+        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![Some(&pk)], &hash, index);
 
         assert_eq!(
             decrypted_plaintext,
@@ -306,7 +309,7 @@ mod tests {
             .encrypt(plaintext.clone(), &pk_correct, &hash, index)
             .unwrap();
 
-        let pks_list_empty: Vec<DescriptorPublicKey> = Vec::new();
+        let pks_list_empty = Vec::new();
         let decrypted_plaintext = cipher.decrypt(ciphertext, &pks_list_empty, &hash, index);
 
         assert_eq!(

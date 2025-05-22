@@ -1,10 +1,15 @@
 [package]
 name = "descriptor-encrypt"
 version = "0.1.0"
-edition = "2024"
 authors = ["Joshua Doman <joshsdoman@gmail.com>"]
 license = "CC0-1.0"
+homepage = "https://github.com/joshdoman/descriptor-encrypt"
+repository = "https://github.com/joshdoman/descriptor-encrypt"
+description = "Encrypt any Bitcoin wallet descriptor with a matching access control policy"
+keywords = [ "crypto", "bitcoin", "descriptor", "miniscript", "encrypt" ]
 readme = "README.md"
+edition = "2024"
+rust-version = "1.85.0"
 
 [features]
 default = ["std"]

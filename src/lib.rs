@@ -190,8 +190,9 @@ pub fn decrypt(
     }
 
     let version = data[0];
-    let data = match version {
-        V0 | V1 => &data[1..],
+    let (data, share_size) = match version {
+        V0 => (&data[1..], 48_usize),
+        V1 => (&data[1..], 32_usize),
         _ => return Err(anyhow!("Unsupported version: {}", version)),
     };
 
@@ -203,12 +204,12 @@ pub fn decrypt(
         return Err(anyhow!("Missing bytes"));
     }
 
-    let encrypted_shares: Vec<Vec<u8>> = data[size..size + num_keys * 48]
-        .chunks_exact(48)
+    let encrypted_shares: Vec<Vec<u8>> = data[size..size + num_keys * share_size]
+        .chunks_exact(share_size)
         .map(|chunk| chunk.to_vec())
         .collect();
 
-    let encrypted_payload = &data[size + num_keys * 48..];
+    let encrypted_payload = &data[size + num_keys * share_size..];
 
     let nonce = [0u8; 12];
     let payload = match version {

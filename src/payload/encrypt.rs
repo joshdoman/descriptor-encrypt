@@ -154,7 +154,7 @@ pub fn decrypt_with_full_secrecy(
         }
     }
 
-    Err(Error::NoSuitableCombination.into())
+    Err(Error::DecryptionFailed.into())
 }
 
 fn encrypt_with_cipher<T: KeyCipher>(
@@ -367,7 +367,7 @@ pub enum Error {
     /// Additional keys required to decrypt
     KeysRequired(usize),
     /// Unable to decrypt with any combination of keys
-    NoSuitableCombination,
+    DecryptionFailed,
 }
 
 impl std::fmt::Display for Error {
@@ -380,8 +380,8 @@ impl std::fmt::Display for Error {
             Self::KeysRequired(num_required) => {
                 write!(f, "requires {num_required} additional key(s)")
             }
-            Self::NoSuitableCombination => {
-                write!(f, "unable to decrypt with any combination of keys")
+            Self::DecryptionFailed => {
+                write!(f, "unable to decrypt")
             }
         }
     }

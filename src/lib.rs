@@ -142,7 +142,7 @@ pub fn encrypt(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
 }
 
 /// Identical to `encrypt` except it provides full secrecy during encryption. as no
-/// information is gained unless the descriptor can be decrypted.
+/// information is gained about key inclusion unless the descriptor can be decrypted.
 ///
 /// Tradeoffs:
 /// - More private: no information is revealed from partial decryptions

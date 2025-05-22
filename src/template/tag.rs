@@ -58,7 +58,7 @@ impl Tag {
     #[allow(unsafe_code)]
     pub fn from(value: u8) -> Self {
         match value {
-            0x00..=0x2D => unsafe { std::mem::transmute(value) },
+            0x00..=0x2D => unsafe { std::mem::transmute::<u8, Tag>(value) },
             _ => Tag::Unrecognized,
         }
     }

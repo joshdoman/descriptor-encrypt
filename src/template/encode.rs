@@ -679,7 +679,7 @@ mod tests {
         // DescriptorXKey
         let xkey = DescriptorXKey {
             origin: None,
-            xkey: xpub.clone(),
+            xkey: xpub,
             derivation_path: dp_from_str("m/0"),
             wildcard: Wildcard::Unhardened,
         };
@@ -700,7 +700,7 @@ mod tests {
             DerivPaths::new(multixkey_paths_str.iter().map(|s| dp_from_str(s)).collect()).unwrap();
         let multixkey = DescriptorMultiXKey {
             origin: None,
-            xkey: xpub.clone(),
+            xkey: xpub,
             derivation_paths: multixkey_paths.clone(),
             wildcard: Wildcard::None,
         };

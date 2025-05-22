@@ -41,7 +41,7 @@ pub trait KeyCipher {
     fn decrypt_share(
         &self,
         encrypted_share: Vec<u8>,
-        pks: &Vec<Option<&DescriptorPublicKey>>,
+        pks: &[Option<&DescriptorPublicKey>],
         hash: &[u8; 32],
         index: usize,
     ) -> Result<Vec<u8>>;
@@ -91,7 +91,7 @@ impl KeyCipher for AuthenticatedCipher {
     fn decrypt_share(
         &self,
         encrypted_share: Vec<u8>,
-        pks: &Vec<Option<&DescriptorPublicKey>>,
+        pks: &[Option<&DescriptorPublicKey>],
         hash: &[u8; 32],
         index: usize,
     ) -> Result<Vec<u8>> {
@@ -158,7 +158,7 @@ impl KeyCipher for UnauthenticatedCipher {
     fn decrypt_share(
         &self,
         encrypted_share: Vec<u8>,
-        pks: &Vec<Option<&DescriptorPublicKey>>,
+        pks: &[Option<&DescriptorPublicKey>],
         hash: &[u8; 32],
         index: usize,
     ) -> Result<Vec<u8>> {

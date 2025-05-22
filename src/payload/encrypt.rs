@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: CC0-1.0
 
 use anyhow::{Result, anyhow, ensure};
-use chacha20::{
-    ChaCha20,
-    cipher::{KeyIvInit, StreamCipher},
-};
 use miniscript::{
     Threshold,
     descriptor::{Descriptor, DescriptorPublicKey},
@@ -54,16 +50,14 @@ pub fn encrypt_with_authenticated_shards(
 
     ensure!(keyless_node.is_some(), Error::NoKeysRequired);
 
-    let mut cipher = ChaCha20::new(&master_encryption_key.into(), &nonce.into());
-    let mut buffer = plaintext.clone();
-    cipher.apply_keystream(&mut buffer);
-    let ciphertext = buffer.clone();
+    let cipher = AuthenticatedCipher {};
+    let encrypted_payload =
+        cipher.encrypt_payload(plaintext, master_encryption_key, nonce)?;
 
     let mut hasher = Sha256::new();
-    hasher.update(&ciphertext);
+    hasher.update(&encrypted_payload);
     let hash = hasher.finalize();
 
-    let cipher = AuthenticatedCipher {};
     let tree = ShamirTree::build_tree(
         &keyless_node.unwrap(),
         master_encryption_key.to_vec(),
@@ -73,7 +67,7 @@ pub fn encrypt_with_authenticated_shards(
     )?;
 
     let encrypted_shares = tree.extract_encrypted_shares();
-    Ok((encrypted_shares, ciphertext))
+    Ok((encrypted_shares, encrypted_payload))
 }
 
 /// Reconstructs the master secret from its encrypted Shamir shares and decrypts the payload ciphertext.
@@ -126,7 +120,9 @@ impl ShamirTree {
                 let index = *leaf_index;
                 *leaf_index += 1;
 
-                Ok(ShamirTree::Leaf(cipher.encrypt(share, &pk, hash, index)?))
+                Ok(ShamirTree::Leaf(
+                    cipher.encrypt_share(share, &pk, hash, index)?,
+                ))
             }
             KeylessDescriptorTree::Threshold(thresh) => {
                 let xs: Vec<u8> = (1..=thresh.n() as u8).collect();
@@ -207,13 +203,7 @@ impl ShamirTree {
 
         assert!(secret.len() == 32);
 
-        let key: [u8; 32] = secret.as_slice().try_into().unwrap();
-        let mut cipher = ChaCha20::new(&key.into(), &nonce.into());
-        let mut buffer = ciphertext.clone();
-        cipher.apply_keystream(&mut buffer);
-        let plaintext = buffer;
-
-        Ok(plaintext)
+        cipher.decrypt_payload(ciphertext, secret.as_slice().try_into().unwrap(), nonce)
     }
 
     /// Helper function to decrypt tree of encrypted shamir shares
@@ -234,7 +224,8 @@ impl ShamirTree {
                     return Ok(vec![]);
                 }
 
-                if let Some(plaintext) = cipher.decrypt(encrypted_share.to_vec(), keys, hash, index)
+                if let Ok(plaintext) =
+                    cipher.decrypt_share(encrypted_share.to_vec(), keys, hash, index)
                 {
                     return Ok(plaintext);
                 }
@@ -374,9 +365,13 @@ mod tests {
         let master_key = [1u8; 32];
         let plaintext: Data = b"This is test plaintext".to_vec();
 
-        let (shares, ciphertext) =
-            encrypt_with_authenticated_shards(descriptor, master_key, NONCE_VALUE, plaintext.clone())
-                .unwrap();
+        let (shares, ciphertext) = encrypt_with_authenticated_shards(
+            descriptor,
+            master_key,
+            NONCE_VALUE,
+            plaintext.clone(),
+        )
+        .unwrap();
 
         (shares, plaintext, ciphertext)
     }

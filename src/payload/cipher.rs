@@ -1,4 +1,8 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use chacha20::{
+    ChaCha20,
+    cipher::{KeyIvInit, StreamCipher},
+};
 use chacha20poly1305::{
     ChaCha20Poly1305,
     aead::{Aead, KeyInit},
@@ -6,52 +10,86 @@ use chacha20poly1305::{
 use miniscript::descriptor::{DescriptorPublicKey, SinglePubKey};
 use sha2::{Digest, Sha256};
 
-/// A trait to construct a cipher that encrypts using a public key
+/// A trait to construct a cipher
 pub trait KeyCipher {
-    /// Returns ciphertext encrypted using a public key, a derivation hash, and an index
-    fn encrypt(
+    /// Returns an encrypted payload
+    fn encrypt_payload(
         &self,
-        plaintext: Vec<u8>,
+        payload: Vec<u8>,
+        encryption_key: [u8; 32],
+        nonce: [u8; 12],
+    ) -> Result<Vec<u8>>;
+
+    /// Returns a decrypted payload
+    fn decrypt_payload(
+        &self,
+        encrypted_payload: Vec<u8>,
+        encryption_key: [u8; 32],
+        nonce: [u8; 12],
+    ) -> Result<Vec<u8>>;
+
+    /// Returns a share encrypted using a public key, a derivation hash, and an index
+    fn encrypt_share(
+        &self,
+        share: Vec<u8>,
         pk: &DescriptorPublicKey,
         hash: &[u8; 32],
         index: usize,
     ) -> Result<Vec<u8>>;
 
     /// Returns plaintext decrypted using a set of public keys, a derivation hash, and an index
-    fn decrypt(
+    fn decrypt_share(
         &self,
-        ciphertext: Vec<u8>,
+        encrypted_share: Vec<u8>,
         pks: &Vec<Option<&DescriptorPublicKey>>,
         hash: &[u8; 32],
         index: usize,
-    ) -> Option<Vec<u8>>;
+    ) -> Result<Vec<u8>>;
 }
 
 pub struct AuthenticatedCipher {}
 
 impl KeyCipher for AuthenticatedCipher {
-    fn encrypt(
+    fn encrypt_payload(
         &self,
-        plaintext: Vec<u8>,
+        payload: Vec<u8>,
+        encryption_key: [u8; 32],
+        nonce: [u8; 12],
+    ) -> Result<Vec<u8>> {
+        Ok(apply_chacha20(payload, encryption_key, nonce))
+    }
+
+    fn decrypt_payload(
+        &self,
+        encrypted_payload: Vec<u8>,
+        encryption_key: [u8; 32],
+        nonce: [u8; 12],
+    ) -> Result<Vec<u8>> {
+        Ok(apply_chacha20(payload, encryption_key, nonce))
+    }
+
+    fn encrypt_share(
+        &self,
+        share: Vec<u8>,
         pk: &DescriptorPublicKey,
         hash: &[u8; 32],
         index: usize,
     ) -> Result<Vec<u8>> {
         let (nonce, cipher) = get_chacha20_poly1305_cipher(pk, hash, index)?;
-        let ciphertext = cipher
-            .encrypt(&nonce, plaintext.as_ref())
+        let encrypted_share = cipher
+            .encrypt(&nonce, share.as_ref())
             .map_err(|e| anyhow::anyhow!("ChaCha20Poly1305 encryption error: {:?}", e))?;
 
-        Ok(ciphertext.as_slice().try_into().unwrap())
+        Ok(encrypted_share.as_slice().try_into().unwrap())
     }
 
-    fn decrypt(
+    fn decrypt_share(
         &self,
-        ciphertext: Vec<u8>,
+        encrypted_share: Vec<u8>,
         pks: &Vec<Option<&DescriptorPublicKey>>,
         hash: &[u8; 32],
         index: usize,
-    ) -> Option<Vec<u8>> {
+    ) -> Result<Vec<u8>> {
         for pk in pks {
             let Some(pk) = pk else {
                 continue;
@@ -59,15 +97,26 @@ impl KeyCipher for AuthenticatedCipher {
             let Ok((nonce, cipher)) = get_chacha20_poly1305_cipher(pk, hash, index) else {
                 continue;
             };
-            let Ok(result) = cipher.decrypt(&nonce, ciphertext.as_ref()) else {
+            let Ok(share) = cipher.decrypt(&nonce, encrypted_share.as_ref()) else {
                 continue;
             };
 
-            return Some(result);
+            return Ok(share);
         }
 
-        None
+        Err(anyhow!("Failed to decrypt"))
     }
+}
+
+fn apply_chacha20(
+    plaintext: Vec<u8>,
+    encryption_key: [u8; 32],
+    nonce: [u8; 12],
+) -> Vec<u8> {
+    let mut cipher = ChaCha20::new(&encryption_key.into(), &nonce.into());
+    let mut buffer = plaintext.clone();
+    cipher.apply_keystream(&mut buffer);
+    buffer
 }
 
 fn get_chacha20_poly1305_cipher(
@@ -154,14 +203,14 @@ mod tests {
         let plaintext = b"this is a secret message".to_vec();
 
         let ciphertext = cipher
-            .encrypt(plaintext.clone(), &pk, &hash, index)
+            .encrypt_share(plaintext.clone(), &pk, &hash, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![Some(&pk)], &hash, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &vec![Some(&pk)], &hash, index);
 
         assert_eq!(
-            decrypted_plaintext,
-            Some(plaintext),
+            decrypted_plaintext.unwrap(),
+            plaintext,
             "Decrypted plaintext should match original."
         );
     }
@@ -176,13 +225,13 @@ mod tests {
         let plaintext = b"another secret".to_vec();
 
         let ciphertext = cipher
-            .encrypt(plaintext.clone(), &pk1, &hash, index)
+            .encrypt_share(plaintext.clone(), &pk1, &hash, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![Some(&pk2)], &hash, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &vec![Some(&pk2)], &hash, index);
 
-        assert_eq!(
-            decrypted_plaintext, None,
+        assert!(
+            decrypted_plaintext.is_err(),
             "Decryption should fail with the wrong public key."
         );
     }
@@ -197,13 +246,13 @@ mod tests {
         let plaintext = b"secret with hash".to_vec();
 
         let ciphertext = cipher
-            .encrypt(plaintext.clone(), &pk, &hash1, index)
+            .encrypt_share(plaintext.clone(), &pk, &hash1, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![Some(&pk)], &hash2, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &vec![Some(&pk)], &hash2, index);
 
-        assert_eq!(
-            decrypted_plaintext, None,
+        assert!(
+            decrypted_plaintext.is_err(),
             "Decryption should fail with the wrong hash."
         );
     }
@@ -218,13 +267,13 @@ mod tests {
         let plaintext = b"secret with index".to_vec();
 
         let ciphertext = cipher
-            .encrypt(plaintext.clone(), &pk, &hash, index1)
+            .encrypt_share(plaintext.clone(), &pk, &hash, index1)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![Some(&pk)], &hash, index2);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &vec![Some(&pk)], &hash, index2);
 
-        assert_eq!(
-            decrypted_plaintext, None,
+        assert!(
+            decrypted_plaintext.is_err(),
             "Decryption should fail with the wrong index."
         );
     }
@@ -240,15 +289,15 @@ mod tests {
         let plaintext = b"find the right key!".to_vec();
 
         let ciphertext = cipher
-            .encrypt(plaintext.clone(), &pk_correct, &hash, index)
+            .encrypt_share(plaintext.clone(), &pk_correct, &hash, index)
             .unwrap();
 
         let pks_list = vec![Some(&pk_wrong1), Some(&pk_correct), Some(&pk_wrong2)];
-        let decrypted_plaintext = cipher.decrypt(ciphertext, &pks_list, &hash, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &pks_list, &hash, index);
 
         assert_eq!(
-            decrypted_plaintext,
-            Some(plaintext),
+            decrypted_plaintext.unwrap(),
+            plaintext,
             "Decryption should succeed if the correct key is in the list."
         );
     }
@@ -264,14 +313,14 @@ mod tests {
         let plaintext = b"key not here".to_vec();
 
         let ciphertext = cipher
-            .encrypt(plaintext.clone(), &pk_correct, &hash, index)
+            .encrypt_share(plaintext.clone(), &pk_correct, &hash, index)
             .unwrap();
 
         let pks_list = vec![Some(&pk_wrong1), Some(&pk_wrong2)];
-        let decrypted_plaintext = cipher.decrypt(ciphertext, &pks_list, &hash, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &pks_list, &hash, index);
 
-        assert_eq!(
-            decrypted_plaintext, None,
+        assert!(
+            decrypted_plaintext.is_err(),
             "Decryption should fail if the correct key is not in the list."
         );
     }
@@ -285,14 +334,14 @@ mod tests {
         let plaintext = Vec::new();
 
         let ciphertext = cipher
-            .encrypt(plaintext.clone(), &pk, &hash, index)
+            .encrypt_share(plaintext.clone(), &pk, &hash, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![Some(&pk)], &hash, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &vec![Some(&pk)], &hash, index);
 
         assert_eq!(
-            decrypted_plaintext,
-            Some(plaintext),
+            decrypted_plaintext.unwrap(),
+            plaintext,
             "Encryption/decryption of empty plaintext should work."
         );
     }
@@ -306,14 +355,14 @@ mod tests {
         let plaintext = b"no keys to try".to_vec();
 
         let ciphertext = cipher
-            .encrypt(plaintext.clone(), &pk_correct, &hash, index)
+            .encrypt_share(plaintext.clone(), &pk_correct, &hash, index)
             .unwrap();
 
         let pks_list_empty = Vec::new();
-        let decrypted_plaintext = cipher.decrypt(ciphertext, &pks_list_empty, &hash, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &pks_list_empty, &hash, index);
 
-        assert_eq!(
-            decrypted_plaintext, None,
+        assert!(
+            decrypted_plaintext.is_err(),
             "Decryption should fail if the list of public keys is empty."
         );
     }
@@ -328,10 +377,10 @@ mod tests {
         let plaintext = b"same data, different key".to_vec();
 
         let ciphertext1 = cipher
-            .encrypt(plaintext.clone(), &pk1, &hash, index)
+            .encrypt_share(plaintext.clone(), &pk1, &hash, index)
             .unwrap();
         let ciphertext2 = cipher
-            .encrypt(plaintext.clone(), &pk2, &hash, index)
+            .encrypt_share(plaintext.clone(), &pk2, &hash, index)
             .unwrap();
 
         assert_ne!(
@@ -350,10 +399,10 @@ mod tests {
         let plaintext = b"same data, different hash".to_vec();
 
         let ciphertext1 = cipher
-            .encrypt(plaintext.clone(), &pk, &hash1, index)
+            .encrypt_share(plaintext.clone(), &pk, &hash1, index)
             .unwrap();
         let ciphertext2 = cipher
-            .encrypt(plaintext.clone(), &pk, &hash2, index)
+            .encrypt_share(plaintext.clone(), &pk, &hash2, index)
             .unwrap();
 
         assert_ne!(
@@ -372,10 +421,10 @@ mod tests {
         let plaintext = b"same data, different index".to_vec();
 
         let ciphertext1 = cipher
-            .encrypt(plaintext.clone(), &pk, &hash, index1)
+            .encrypt_share(plaintext.clone(), &pk, &hash, index1)
             .unwrap();
         let ciphertext2 = cipher
-            .encrypt(plaintext.clone(), &pk, &hash, index2)
+            .encrypt_share(plaintext.clone(), &pk, &hash, index2)
             .unwrap();
 
         assert_ne!(

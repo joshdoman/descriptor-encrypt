@@ -103,3 +103,281 @@ fn get_encryption_key(pk: &DescriptorPublicKey, hash: &[u8; 32], leaf_index: usi
     result.copy_from_slice(encryption_key.as_slice());
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bitcoin::{
+        PublicKey,
+        secp256k1::{PublicKey as SecpPublicKey, Secp256k1, SecretKey},
+    };
+    use miniscript::descriptor::SinglePub;
+
+    // Helper function to create a DescriptorPublicKey for testing
+    fn create_test_pk(seed_val: u32) -> DescriptorPublicKey {
+        let secp = Secp256k1::new();
+        let mut sk_bytes = [0u8; 32];
+        sk_bytes[0..4].copy_from_slice(&seed_val.to_be_bytes());
+
+        let secret_key = SecretKey::from_slice(&sk_bytes)
+            .unwrap_or_else(|_| panic!("Failed to create secret key from seed {}", seed_val));
+
+        let pk_inner = SecpPublicKey::from_secret_key(&secp, &secret_key);
+
+        let full_pk = PublicKey {
+            inner: pk_inner,
+            compressed: true,
+        };
+
+        DescriptorPublicKey::Single(SinglePub {
+            key: SinglePubKey::FullKey(full_pk),
+            origin: None,
+        })
+    }
+
+    // Helper function to create a dummy 32-byte hash
+    fn create_dummy_hash(seed: u8) -> [u8; 32] {
+        let mut seed_data = [0u8; 32];
+        seed_data[0] = seed;
+        Sha256::digest(&seed_data).into()
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_cycle_succeeds() {
+        let cipher = AuthenticatedCipher {};
+        let pk = create_test_pk(1);
+        let hash = create_dummy_hash(1);
+        let index = 0_usize;
+        let plaintext = b"this is a secret message".to_vec();
+
+        let ciphertext = cipher
+            .encrypt(plaintext.clone(), &pk, &hash, index)
+            .unwrap();
+
+        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![pk], &hash, index);
+
+        assert_eq!(
+            decrypted_plaintext,
+            Some(plaintext),
+            "Decrypted plaintext should match original."
+        );
+    }
+
+    #[test]
+    fn test_decrypt_with_wrong_public_key_fails() {
+        let cipher = AuthenticatedCipher {};
+        let pk1 = create_test_pk(1);
+        let pk2 = create_test_pk(2);
+        let hash = create_dummy_hash(1);
+        let index = 0_usize;
+        let plaintext = b"another secret".to_vec();
+
+        let ciphertext = cipher
+            .encrypt(plaintext.clone(), &pk1, &hash, index)
+            .unwrap();
+
+        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![pk2], &hash, index);
+
+        assert_eq!(
+            decrypted_plaintext, None,
+            "Decryption should fail with the wrong public key."
+        );
+    }
+
+    #[test]
+    fn test_decrypt_with_wrong_hash_fails() {
+        let cipher = AuthenticatedCipher {};
+        let pk = create_test_pk(1);
+        let hash1 = create_dummy_hash(1);
+        let hash2 = create_dummy_hash(2);
+        let index = 0_usize;
+        let plaintext = b"secret with hash".to_vec();
+
+        let ciphertext = cipher
+            .encrypt(plaintext.clone(), &pk, &hash1, index)
+            .unwrap();
+
+        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![pk], &hash2, index);
+
+        assert_eq!(
+            decrypted_plaintext, None,
+            "Decryption should fail with the wrong hash."
+        );
+    }
+
+    #[test]
+    fn test_decrypt_with_wrong_index_fails() {
+        let cipher = AuthenticatedCipher {};
+        let pk = create_test_pk(1);
+        let hash = create_dummy_hash(1);
+        let index1 = 0_usize;
+        let index2 = 1_usize;
+        let plaintext = b"secret with index".to_vec();
+
+        let ciphertext = cipher
+            .encrypt(plaintext.clone(), &pk, &hash, index1)
+            .unwrap();
+
+        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![pk], &hash, index2);
+
+        assert_eq!(
+            decrypted_plaintext, None,
+            "Decryption should fail with the wrong index."
+        );
+    }
+
+    #[test]
+    fn test_decrypt_with_list_of_pks_correct_key_present_succeeds() {
+        let cipher = AuthenticatedCipher {};
+        let pk_correct = create_test_pk(10);
+        let pk_wrong1 = create_test_pk(11);
+        let pk_wrong2 = create_test_pk(12);
+        let hash = create_dummy_hash(5);
+        let index = 3_usize;
+        let plaintext = b"find the right key!".to_vec();
+
+        let ciphertext = cipher
+            .encrypt(plaintext.clone(), &pk_correct, &hash, index)
+            .unwrap();
+
+        let pks_list = vec![pk_wrong1, pk_correct, pk_wrong2];
+        let decrypted_plaintext = cipher.decrypt(ciphertext, &pks_list, &hash, index);
+
+        assert_eq!(
+            decrypted_plaintext,
+            Some(plaintext),
+            "Decryption should succeed if the correct key is in the list."
+        );
+    }
+
+    #[test]
+    fn test_decrypt_with_list_of_pks_correct_key_absent_fails() {
+        let cipher = AuthenticatedCipher {};
+        let pk_correct = create_test_pk(20);
+        let pk_wrong1 = create_test_pk(21);
+        let pk_wrong2 = create_test_pk(22);
+        let hash = create_dummy_hash(6);
+        let index = 4_usize;
+        let plaintext = b"key not here".to_vec();
+
+        let ciphertext = cipher
+            .encrypt(plaintext.clone(), &pk_correct, &hash, index)
+            .unwrap();
+
+        let pks_list = vec![pk_wrong1, pk_wrong2];
+        let decrypted_plaintext = cipher.decrypt(ciphertext, &pks_list, &hash, index);
+
+        assert_eq!(
+            decrypted_plaintext, None,
+            "Decryption should fail if the correct key is not in the list."
+        );
+    }
+
+    #[test]
+    fn test_empty_plaintext_encrypt_decrypt_succeeds() {
+        let cipher = AuthenticatedCipher {};
+        let pk = create_test_pk(30);
+        let hash = create_dummy_hash(7);
+        let index = 5_usize;
+        let plaintext = Vec::new();
+
+        let ciphertext = cipher
+            .encrypt(plaintext.clone(), &pk, &hash, index)
+            .unwrap();
+
+        let decrypted_plaintext = cipher.decrypt(ciphertext, &vec![pk], &hash, index);
+
+        assert_eq!(
+            decrypted_plaintext,
+            Some(plaintext),
+            "Encryption/decryption of empty plaintext should work."
+        );
+    }
+
+    #[test]
+    fn test_decrypt_with_empty_pk_list_fails() {
+        let cipher = AuthenticatedCipher {};
+        let pk_correct = create_test_pk(40);
+        let hash = create_dummy_hash(8);
+        let index = 6_usize;
+        let plaintext = b"no keys to try".to_vec();
+
+        let ciphertext = cipher
+            .encrypt(plaintext.clone(), &pk_correct, &hash, index)
+            .unwrap();
+
+        let pks_list_empty: Vec<DescriptorPublicKey> = Vec::new();
+        let decrypted_plaintext = cipher.decrypt(ciphertext, &pks_list_empty, &hash, index);
+
+        assert_eq!(
+            decrypted_plaintext, None,
+            "Decryption should fail if the list of public keys is empty."
+        );
+    }
+
+    #[test]
+    fn test_different_pks_produce_different_ciphertexts() {
+        let cipher = AuthenticatedCipher {};
+        let pk1 = create_test_pk(51);
+        let pk2 = create_test_pk(52);
+        let hash = create_dummy_hash(9);
+        let index = 7_usize;
+        let plaintext = b"same data, different key".to_vec();
+
+        let ciphertext1 = cipher
+            .encrypt(plaintext.clone(), &pk1, &hash, index)
+            .unwrap();
+        let ciphertext2 = cipher
+            .encrypt(plaintext.clone(), &pk2, &hash, index)
+            .unwrap();
+
+        assert_ne!(
+            ciphertext1, ciphertext2,
+            "Ciphertexts should differ if public keys differ."
+        );
+    }
+
+    #[test]
+    fn test_different_hashes_produce_different_ciphertexts() {
+        let cipher = AuthenticatedCipher {};
+        let pk = create_test_pk(60);
+        let hash1 = create_dummy_hash(10);
+        let hash2 = create_dummy_hash(11);
+        let index = 8_usize;
+        let plaintext = b"same data, different hash".to_vec();
+
+        let ciphertext1 = cipher
+            .encrypt(plaintext.clone(), &pk, &hash1, index)
+            .unwrap();
+        let ciphertext2 = cipher
+            .encrypt(plaintext.clone(), &pk, &hash2, index)
+            .unwrap();
+
+        assert_ne!(
+            ciphertext1, ciphertext2,
+            "Ciphertexts should differ if hashes differ."
+        );
+    }
+
+    #[test]
+    fn test_different_indices_produce_different_ciphertexts() {
+        let cipher = AuthenticatedCipher {};
+        let pk = create_test_pk(70);
+        let hash = create_dummy_hash(12);
+        let index1 = 9_usize;
+        let index2 = 10_usize;
+        let plaintext = b"same data, different index".to_vec();
+
+        let ciphertext1 = cipher
+            .encrypt(plaintext.clone(), &pk, &hash, index1)
+            .unwrap();
+        let ciphertext2 = cipher
+            .encrypt(plaintext.clone(), &pk, &hash, index2)
+            .unwrap();
+
+        assert_ne!(
+            ciphertext1, ciphertext2,
+            "Ciphertexts should differ if indices differ."
+        );
+    }
+}

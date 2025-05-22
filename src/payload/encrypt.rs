@@ -412,10 +412,8 @@ mod tests {
             pubkeys.push(pubkey_val);
         }
 
-        let pubkey_strs_vec: Vec<String> = pubkeys
-            .iter()
-            .map(|pk_val| pk_val.to_string())
-            .collect();
+        let pubkey_strs_vec: Vec<String> =
+            pubkeys.iter().map(|pk_val| pk_val.to_string()).collect();
 
         let desc_str = format!("wsh(multi({},{}))", k, pubkey_strs_vec.join(","));
         let descriptor = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();

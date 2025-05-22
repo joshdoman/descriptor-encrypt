@@ -384,7 +384,9 @@ mod tests {
                 // Check that the keys are the same
                 let mut keys = Vec::new();
                 for subtree in t.iter() {
-                    if let KeylessDescriptorTree::Key(pk) = subtree { keys.push(pk.clone()) }
+                    if let KeylessDescriptorTree::Key(pk) = subtree {
+                        keys.push(pk.clone())
+                    }
                 }
                 assert!(keys.contains(&key1));
                 assert!(keys.contains(&key2));
@@ -421,7 +423,9 @@ mod tests {
                 // Check that the keys are the same
                 let mut keys = Vec::new();
                 for subtree in t.iter() {
-                    if let KeylessDescriptorTree::Key(pk) = subtree { keys.push(pk.clone()) }
+                    if let KeylessDescriptorTree::Key(pk) = subtree {
+                        keys.push(pk.clone())
+                    }
                 }
                 assert!(keys.contains(&key1));
                 assert!(keys.contains(&key2));
@@ -583,10 +587,8 @@ mod tests {
                 let key_serialized2 = serialize_descriptor_pubkey(&key2);
                 let key_serialized3 = serialize_descriptor_pubkey(&key3);
 
-                let extracted_serialized: Vec<_> = keys
-                    .iter()
-                    .map(serialize_descriptor_pubkey)
-                    .collect();
+                let extracted_serialized: Vec<_> =
+                    keys.iter().map(serialize_descriptor_pubkey).collect();
 
                 assert!(extracted_serialized.contains(&key_serialized1));
                 assert!(extracted_serialized.contains(&key_serialized2));
@@ -619,10 +621,8 @@ mod tests {
                 let key_serialized1 = serialize_descriptor_pubkey(&key1);
                 let key_serialized2 = serialize_descriptor_pubkey(&key2);
 
-                let extracted_serialized: Vec<_> = keys
-                    .iter()
-                    .map(serialize_descriptor_pubkey)
-                    .collect();
+                let extracted_serialized: Vec<_> =
+                    keys.iter().map(serialize_descriptor_pubkey).collect();
 
                 assert!(extracted_serialized.contains(&key_serialized1));
                 assert!(extracted_serialized.contains(&key_serialized2));
@@ -681,10 +681,8 @@ mod tests {
                 let key_serialized1 = serialize_descriptor_pubkey(&key1);
                 let key_serialized2 = serialize_descriptor_pubkey(&key2);
 
-                let extracted_serialized: Vec<_> = keys
-                    .iter()
-                    .map(serialize_descriptor_pubkey)
-                    .collect();
+                let extracted_serialized: Vec<_> =
+                    keys.iter().map(serialize_descriptor_pubkey).collect();
 
                 assert!(extracted_serialized.contains(&key_serialized1));
                 assert!(extracted_serialized.contains(&key_serialized2));
@@ -710,10 +708,8 @@ mod tests {
                 let key_serialized2 = serialize_descriptor_pubkey(&key2);
                 let key_serialized3 = serialize_descriptor_pubkey(&key3);
 
-                let extracted_serialized: Vec<_> = keys
-                    .iter()
-                    .map(serialize_descriptor_pubkey)
-                    .collect();
+                let extracted_serialized: Vec<_> =
+                    keys.iter().map(serialize_descriptor_pubkey).collect();
 
                 assert!(extracted_serialized.contains(&key_serialized1));
                 assert!(extracted_serialized.contains(&key_serialized2));
@@ -746,10 +742,8 @@ mod tests {
                 let key_serialized1 = serialize_descriptor_pubkey(&key1);
                 let key_serialized2 = serialize_descriptor_pubkey(&key2);
 
-                let extracted_serialized: Vec<_> = keys
-                    .iter()
-                    .map(serialize_descriptor_pubkey)
-                    .collect();
+                let extracted_serialized: Vec<_> =
+                    keys.iter().map(serialize_descriptor_pubkey).collect();
 
                 assert!(extracted_serialized.contains(&key_serialized1));
                 assert!(extracted_serialized.contains(&key_serialized2));
@@ -782,10 +776,8 @@ mod tests {
                 let key_serialized1 = serialize_descriptor_pubkey(&key1);
                 let key_serialized2 = serialize_descriptor_pubkey(&key2);
 
-                let extracted_serialized: Vec<_> = keys
-                    .iter()
-                    .map(serialize_descriptor_pubkey)
-                    .collect();
+                let extracted_serialized: Vec<_> =
+                    keys.iter().map(serialize_descriptor_pubkey).collect();
 
                 assert!(extracted_serialized.contains(&key_serialized1));
                 assert!(extracted_serialized.contains(&key_serialized2));
@@ -820,10 +812,8 @@ mod tests {
                 let key_serialized2 = serialize_descriptor_pubkey(&key2);
                 let key_serialized3 = serialize_descriptor_pubkey(&key3);
 
-                let extracted_serialized: Vec<_> = keys
-                    .iter()
-                    .map(serialize_descriptor_pubkey)
-                    .collect();
+                let extracted_serialized: Vec<_> =
+                    keys.iter().map(serialize_descriptor_pubkey).collect();
 
                 assert!(extracted_serialized.contains(&key_serialized1));
                 assert!(extracted_serialized.contains(&key_serialized2));
@@ -855,10 +845,7 @@ mod tests {
         let key_serialized2 = serialize_descriptor_pubkey(&key2);
         let key_serialized3 = serialize_descriptor_pubkey(&key3);
 
-        let extracted_serialized: Vec<_> = keys
-            .iter()
-            .map(serialize_descriptor_pubkey)
-            .collect();
+        let extracted_serialized: Vec<_> = keys.iter().map(serialize_descriptor_pubkey).collect();
 
         assert!(extracted_serialized.contains(&key_serialized1));
         assert!(extracted_serialized.contains(&key_serialized2));
@@ -925,10 +912,7 @@ mod tests {
         let key_serialized1 = serialize_descriptor_pubkey(&key1);
         let key_serialized2 = serialize_descriptor_pubkey(&key2);
 
-        let extracted_serialized: Vec<_> = keys
-            .iter()
-            .map(serialize_descriptor_pubkey)
-            .collect();
+        let extracted_serialized: Vec<_> = keys.iter().map(serialize_descriptor_pubkey).collect();
 
         assert!(extracted_serialized.contains(&key_serialized1));
         assert!(extracted_serialized.contains(&key_serialized2));
@@ -962,10 +946,7 @@ mod tests {
         let key_serialized2 = serialize_descriptor_pubkey(&key2);
         let key_serialized3 = serialize_descriptor_pubkey(&key3);
 
-        let extracted_serialized: Vec<_> = keys
-            .iter()
-            .map(serialize_descriptor_pubkey)
-            .collect();
+        let extracted_serialized: Vec<_> = keys.iter().map(serialize_descriptor_pubkey).collect();
 
         assert!(extracted_serialized.contains(&key_serialized1));
         assert!(extracted_serialized.contains(&key_serialized2));

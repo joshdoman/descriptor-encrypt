@@ -50,7 +50,7 @@ The executable will be located at `target/release/descriptor-encrypt`.
 ### Commands
 
 *   #### Encrypt a Descriptor
-    Encrypts a Bitcoin descriptor and outputs the result in Base64.
+    Encrypts a Bitcoin descriptor and outputs the result as hex.
     ```bash
     ./target/release/descriptor-encrypt encrypt <DESCRIPTOR_STRING>
     ```
@@ -61,29 +61,29 @@ The executable will be located at `target/release/descriptor-encrypt`.
     *   `-w, --with-full-secrecy`: Enable full secrecy mode, which leaks no information about key inclusion without full decryption.
 
 *   #### Decrypt a Descriptor
-    Decrypts Base64-encoded encrypted descriptor data using a set of public keys.
+    Decrypts hex-encoded encrypted descriptor data using a set of public keys.
     ```bash
-    ./target/release/descriptor-encrypt decrypt <BASE64_DATA> -p <PKS>
+    ./target/release/descriptor-encrypt decrypt <DATA> -p <PKS>
     ```
     **Arguments**:
-    *   `<BASE64_DATA>`: Base64-encoded encrypted data.
+    *   `<DATA>`: hex-encoded encrypted data.
     *   `-p, --pks <PKS>`: Comma-separated list of public keys and xpubs (e.g., "pk1,pk2,pk3"). At least one public key must be provided.
 
 *   #### Get Template Descriptor
-    Retrieves a template descriptor (with dummy keys, hashes, and timelocks) from Base64-encoded encrypted data.
+    Retrieves a template descriptor (with dummy keys, hashes, and timelocks) from hex-encoded encrypted data.
     ```bash
-    ./target/release/descriptor-encrypt get-template <BASE64_DATA>
+    ./target/release/descriptor-encrypt get-template <DATA>
     ```
     **Arguments**:
-    *   `<BASE64_DATA>`: Base64-encoded encrypted data.
+    *   `<DATA>`: hex-encoded encrypted data.
 
 *   #### Get Origin Derivation Paths
-    Retrieves the origin derivation paths from Base64-encoded encrypted data.
+    Retrieves the origin derivation paths from hex-encoded encrypted data.
     ```bash
-    ./target/release/descriptor-encrypt get-derivation-paths <BASE64_DATA>
+    ./target/release/descriptor-encrypt get-derivation-paths <DATA>
     ```
     **Arguments**:
-    *   `<BASE64_DATA>`: Base64-encoded encrypted data.
+    *   `<DATA>`: hex-encoded encrypted data.
 
 ## Library Usage
 

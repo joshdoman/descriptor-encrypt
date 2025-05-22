@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: CC0-1.0
 
 use anyhow::{Context, Result};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use clap::{Args, Parser, Subcommand};
+use hex;
 use std::str::FromStr;
 
 use descriptor_encrypt::bitcoin::bip32::DerivationPath;
@@ -21,13 +21,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Encrypts a Bitcoin descriptor, outputs Base64 (use -w or --with-full-secrecy for maximum privacy)
+    /// Encrypts a Bitcoin descriptor, outputs hex (use -w or --with-full-secrecy for maximum privacy)
     Encrypt(EncryptArgs),
-    /// Decrypts a Base64-encoded encrypted descriptor
+    /// Decrypts a hex-encoded encrypted descriptor
     Decrypt(DecryptArgs),
-    /// Gets a template descriptor (dummy keys, fingerprints, hashes, and timelocks) from Base64-encoded encrypted data
+    /// Gets a template descriptor (dummy keys, fingerprints, hashes, and timelocks) from hex-encoded encrypted data
     GetTemplate(GetTemplateArgs),
-    /// Gets origin derivation paths from Base64-encoded encrypted data
+    /// Gets origin derivation paths from hex-encoded encrypted data
     GetDerivationPaths(GetPathsArgs),
 }
 
@@ -42,7 +42,7 @@ struct EncryptArgs {
 
 #[derive(Args)]
 struct DecryptArgs {
-    /// Base64-encoded encrypted data
+    /// Hex-encoded encrypted data
     data: String,
     /// Comma-separated list of public keys and xpubs
     /// Example: "pk1,pk2,pk3"
@@ -52,13 +52,13 @@ struct DecryptArgs {
 
 #[derive(Args)]
 struct GetTemplateArgs {
-    /// Base64-encoded encrypted data
+    /// Hex-encoded encrypted data
     data: String,
 }
 
 #[derive(Args)]
 struct GetPathsArgs {
-    /// Base64-encoded encrypted data
+    /// Hex-encoded encrypted data
     data: String,
 }
 
@@ -84,15 +84,14 @@ fn handle_encrypt(args: EncryptArgs) -> Result<()> {
         descriptor_encrypt::encrypt(desc).context("Encryption failed")?
     };
 
-    println!("{}", BASE64_STANDARD.encode(encrypted_data));
+    println!("{}", hex::encode(encrypted_data));
 
     Ok(())
 }
 
 fn handle_decrypt(args: DecryptArgs) -> Result<()> {
-    let data_bytes = BASE64_STANDARD
-        .decode(&args.data)
-        .context("Failed to decode Base64 data for encrypted payload")?;
+    let data_bytes =
+        hex::decode(&args.data).context("Failed to decode hex data for encrypted payload")?;
 
     let mut pks = Vec::new();
     for pk_str in args.pks {
@@ -110,9 +109,7 @@ fn handle_decrypt(args: DecryptArgs) -> Result<()> {
 }
 
 fn handle_get_template(args: GetTemplateArgs) -> Result<()> {
-    let data_bytes = BASE64_STANDARD
-        .decode(&args.data)
-        .context("Failed to decode Base64 data")?;
+    let data_bytes = hex::decode(&args.data).context("Failed to decode hex data")?;
 
     let template_desc = descriptor_encrypt::get_template(&data_bytes)
         .context("Failed to get template descriptor")?;
@@ -123,9 +120,7 @@ fn handle_get_template(args: GetTemplateArgs) -> Result<()> {
 }
 
 fn handle_get_derivation_paths(args: GetPathsArgs) -> Result<()> {
-    let data_bytes = BASE64_STANDARD
-        .decode(&args.data)
-        .context("Failed to decode Base64 data")?;
+    let data_bytes = hex::decode(&args.data).context("Failed to decode hex data")?;
 
     let paths: Vec<DerivationPath> = descriptor_encrypt::get_origin_derivation_paths(&data_bytes)
         .context("Failed to get origin derivation paths")?;

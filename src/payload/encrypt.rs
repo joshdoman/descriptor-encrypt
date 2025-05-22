@@ -200,8 +200,7 @@ impl ShamirTree {
         ensure!(keyless_node.is_some(), Error::NoKeysRequired);
 
         let mut leaf_index = 0;
-        let tree =
-            ShamirTree::reconstruct_tree(&keyless_node.unwrap(), &shares, &mut leaf_index)?;
+        let tree = ShamirTree::reconstruct_tree(&keyless_node.unwrap(), &shares, &mut leaf_index)?;
 
         ensure! {
             leaf_index == shares.len(),

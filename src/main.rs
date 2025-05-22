@@ -3,7 +3,6 @@
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
-use hex;
 use std::str::FromStr;
 
 use descriptor_encrypt::bitcoin::bip32::DerivationPath;

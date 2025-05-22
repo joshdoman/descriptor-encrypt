@@ -85,7 +85,7 @@ impl KeyCipher for AuthenticatedCipher {
             .encrypt(&nonce, share.as_ref())
             .map_err(|e| anyhow::anyhow!("ChaCha20Poly1305 encryption error: {:?}", e))?;
 
-        Ok(encrypted_share.as_slice().try_into().unwrap())
+        Ok(encrypted_share.as_slice().into())
     }
 
     fn decrypt_share(
@@ -127,7 +127,7 @@ impl KeyCipher for UnauthenticatedCipher {
             .encrypt(&nonce, payload.as_ref())
             .map_err(|e| anyhow::anyhow!("ChaCha20Poly1305 encryption error: {:?}", e))?;
 
-        Ok(encrypted_payload.as_slice().try_into().unwrap())
+        Ok(encrypted_payload.as_slice().into())
     }
 
     fn decrypt_payload(
@@ -204,7 +204,7 @@ fn get_encryption_key(pk: &DescriptorPublicKey, hash: &[u8; 32], leaf_index: usi
         DescriptorPublicKey::XPub(xkey) => xkey.xkey.encode().to_vec(),
         DescriptorPublicKey::MultiXPub(multi_xkey) => multi_xkey.xkey.encode().to_vec(),
     };
-    key_material.extend(hash.clone());
+    key_material.extend(*hash);
     key_material.extend(leaf_index.to_le_bytes().to_vec());
 
     let mut hasher = Sha256::new();
@@ -251,7 +251,7 @@ mod tests {
     fn create_dummy_hash(seed: u8) -> [u8; 32] {
         let mut seed_data = [0u8; 32];
         seed_data[0] = seed;
-        Sha256::digest(&seed_data).into()
+        Sha256::digest(seed_data).into()
     }
 
     #[test]
@@ -266,7 +266,7 @@ mod tests {
             .encrypt_share(plaintext.clone(), &pk, &hash, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &vec![Some(&pk)], &hash, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk)], &hash, index);
 
         assert_eq!(
             decrypted_plaintext.unwrap(),
@@ -288,7 +288,7 @@ mod tests {
             .encrypt_share(plaintext.clone(), &pk1, &hash, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &vec![Some(&pk2)], &hash, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk2)], &hash, index);
 
         assert!(
             decrypted_plaintext.is_err(),
@@ -309,7 +309,7 @@ mod tests {
             .encrypt_share(plaintext.clone(), &pk, &hash1, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &vec![Some(&pk)], &hash2, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk)], &hash2, index);
 
         assert!(
             decrypted_plaintext.is_err(),
@@ -330,7 +330,7 @@ mod tests {
             .encrypt_share(plaintext.clone(), &pk, &hash, index1)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &vec![Some(&pk)], &hash, index2);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk)], &hash, index2);
 
         assert!(
             decrypted_plaintext.is_err(),
@@ -397,7 +397,7 @@ mod tests {
             .encrypt_share(plaintext.clone(), &pk, &hash, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &vec![Some(&pk)], &hash, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk)], &hash, index);
 
         assert_eq!(
             decrypted_plaintext.unwrap(),
@@ -508,7 +508,7 @@ mod tests {
             .unwrap();
 
         let decrypted_plaintext = cipher
-            .decrypt_share(ciphertext, &vec![Some(&pk)], &hash, index)
+            .decrypt_share(ciphertext, &[Some(&pk)], &hash, index)
             .unwrap();
 
         assert_eq!(
@@ -531,7 +531,7 @@ mod tests {
             .unwrap();
 
         let decrypted_plaintext = cipher
-            .decrypt_share(ciphertext, &vec![Some(&pk2_dec)], &hash, index)
+            .decrypt_share(ciphertext, &[Some(&pk2_dec)], &hash, index)
             .unwrap();
 
         assert_ne!(
@@ -554,7 +554,7 @@ mod tests {
             .unwrap();
 
         let decrypted_plaintext = cipher
-            .decrypt_share(ciphertext, &vec![Some(&pk)], &hash2_dec, index)
+            .decrypt_share(ciphertext, &[Some(&pk)], &hash2_dec, index)
             .unwrap();
 
         assert_ne!(
@@ -656,7 +656,7 @@ mod tests {
             .unwrap();
 
         let decrypted_plaintext = cipher
-            .decrypt_share(ciphertext, &vec![Some(&pk)], &hash, index)
+            .decrypt_share(ciphertext, &[Some(&pk)], &hash, index)
             .unwrap();
 
         assert_eq!(

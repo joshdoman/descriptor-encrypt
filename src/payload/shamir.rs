@@ -133,8 +133,8 @@ pub fn split_secret(secret: &[u8], k: usize, x_coords: &[u8]) -> Result<Vec<Shar
         // If k=1, this loop does not run, only a_0 is used.
         if k > 1 {
             let mut hasher = Sha256::new();
-            hasher.update(&[secret_byte]);
-            hasher.update(&x_coords);
+            hasher.update([secret_byte]);
+            hasher.update(x_coords);
             let result = hasher.finalize();
 
             for i in 1..k {
@@ -143,9 +143,9 @@ pub fn split_secret(secret: &[u8], k: usize, x_coords: &[u8]) -> Result<Vec<Shar
         }
 
         // For each x_coord, evaluate the polynomial and store the y_value
-        for i in 0..n {
-            let y_val = poly_eval_horner(&coeffs, shares_data[i].x);
-            shares_data[i].ys.push(y_val);
+        for share in shares_data.iter_mut() {
+            let y_val = poly_eval_horner(&coeffs, share.x);
+            share.ys.push(y_val);
         }
     }
     Ok(shares_data)
@@ -217,11 +217,11 @@ pub fn reconstruct_secret(shares: &[Share], k: usize) -> Result<Vec<u8>, String>
             let mut lagrange_basis_poly_at_0: u8 = 1; // l_j(0), starts at 1 (multiplicative identity)
 
             // Product part of l_j(0): product( x_m / (x_j - x_m) ) for m != j
-            for m in 0..k {
+            for (m, relevant_share) in relevant_shares.iter().enumerate().take(k) {
                 if m == j {
                     continue;
                 }
-                let x_m = relevant_shares[m].x;
+                let x_m = relevant_share.x;
 
                 // Numerator is x_m
                 // Denominator is x_j XOR x_m (since x_j - x_m = x_j + x_m in GF(2^8))

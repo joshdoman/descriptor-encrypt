@@ -152,7 +152,7 @@ impl<Pk: MiniscriptKey> ToDescriptorTree<Pk> for Sh<Pk> {
     fn to_tree(&self) -> DescriptorTree<Pk> {
         match self.as_inner() {
             ShInner::SortedMulti(sortedmulti) => {
-                DescriptorTree::from_sortedmulti::<Legacy>(&sortedmulti)
+                DescriptorTree::from_sortedmulti::<Legacy>(sortedmulti)
             }
             ShInner::Wsh(wsh) => wsh.to_tree(),
             ShInner::Wpkh(wpkh) => DescriptorTree::Key(wpkh.clone().into_inner()),
@@ -165,7 +165,7 @@ impl<Pk: MiniscriptKey> ToDescriptorTree<Pk> for Wsh<Pk> {
     fn to_tree(&self) -> DescriptorTree<Pk> {
         match self.as_inner() {
             WshInner::SortedMulti(sortedmulti) => {
-                DescriptorTree::from_sortedmulti::<Segwitv0>(&sortedmulti)
+                DescriptorTree::from_sortedmulti::<Segwitv0>(sortedmulti)
             }
             WshInner::Ms(ms) => ms.to_tree(),
         }
@@ -384,10 +384,7 @@ mod tests {
                 // Check that the keys are the same
                 let mut keys = Vec::new();
                 for subtree in t.iter() {
-                    match subtree {
-                        KeylessDescriptorTree::Key(pk) => keys.push(pk.clone()),
-                        _ => {}
-                    }
+                    if let KeylessDescriptorTree::Key(pk) = subtree { keys.push(pk.clone()) }
                 }
                 assert!(keys.contains(&key1));
                 assert!(keys.contains(&key2));
@@ -424,10 +421,7 @@ mod tests {
                 // Check that the keys are the same
                 let mut keys = Vec::new();
                 for subtree in t.iter() {
-                    match subtree {
-                        KeylessDescriptorTree::Key(pk) => keys.push(pk.clone()),
-                        _ => {}
-                    }
+                    if let KeylessDescriptorTree::Key(pk) = subtree { keys.push(pk.clone()) }
                 }
                 assert!(keys.contains(&key1));
                 assert!(keys.contains(&key2));
@@ -591,7 +585,7 @@ mod tests {
 
                 let extracted_serialized: Vec<_> = keys
                     .iter()
-                    .map(|k| serialize_descriptor_pubkey(k))
+                    .map(serialize_descriptor_pubkey)
                     .collect();
 
                 assert!(extracted_serialized.contains(&key_serialized1));
@@ -627,7 +621,7 @@ mod tests {
 
                 let extracted_serialized: Vec<_> = keys
                     .iter()
-                    .map(|k| serialize_descriptor_pubkey(k))
+                    .map(serialize_descriptor_pubkey)
                     .collect();
 
                 assert!(extracted_serialized.contains(&key_serialized1));
@@ -689,7 +683,7 @@ mod tests {
 
                 let extracted_serialized: Vec<_> = keys
                     .iter()
-                    .map(|k| serialize_descriptor_pubkey(k))
+                    .map(serialize_descriptor_pubkey)
                     .collect();
 
                 assert!(extracted_serialized.contains(&key_serialized1));
@@ -718,7 +712,7 @@ mod tests {
 
                 let extracted_serialized: Vec<_> = keys
                     .iter()
-                    .map(|k| serialize_descriptor_pubkey(k))
+                    .map(serialize_descriptor_pubkey)
                     .collect();
 
                 assert!(extracted_serialized.contains(&key_serialized1));
@@ -754,7 +748,7 @@ mod tests {
 
                 let extracted_serialized: Vec<_> = keys
                     .iter()
-                    .map(|k| serialize_descriptor_pubkey(k))
+                    .map(serialize_descriptor_pubkey)
                     .collect();
 
                 assert!(extracted_serialized.contains(&key_serialized1));
@@ -790,7 +784,7 @@ mod tests {
 
                 let extracted_serialized: Vec<_> = keys
                     .iter()
-                    .map(|k| serialize_descriptor_pubkey(k))
+                    .map(serialize_descriptor_pubkey)
                     .collect();
 
                 assert!(extracted_serialized.contains(&key_serialized1));
@@ -828,7 +822,7 @@ mod tests {
 
                 let extracted_serialized: Vec<_> = keys
                     .iter()
-                    .map(|k| serialize_descriptor_pubkey(k))
+                    .map(serialize_descriptor_pubkey)
                     .collect();
 
                 assert!(extracted_serialized.contains(&key_serialized1));
@@ -863,7 +857,7 @@ mod tests {
 
         let extracted_serialized: Vec<_> = keys
             .iter()
-            .map(|k| serialize_descriptor_pubkey(k))
+            .map(serialize_descriptor_pubkey)
             .collect();
 
         assert!(extracted_serialized.contains(&key_serialized1));
@@ -933,7 +927,7 @@ mod tests {
 
         let extracted_serialized: Vec<_> = keys
             .iter()
-            .map(|k| serialize_descriptor_pubkey(k))
+            .map(serialize_descriptor_pubkey)
             .collect();
 
         assert!(extracted_serialized.contains(&key_serialized1));
@@ -970,7 +964,7 @@ mod tests {
 
         let extracted_serialized: Vec<_> = keys
             .iter()
-            .map(|k| serialize_descriptor_pubkey(k))
+            .map(serialize_descriptor_pubkey)
             .collect();
 
         assert!(extracted_serialized.contains(&key_serialized1));

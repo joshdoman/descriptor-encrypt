@@ -71,7 +71,7 @@ pub fn decrypt_with_authenticated_shards(
     ciphertext: Data,
 ) -> Result<Data> {
     let cipher = AuthenticatedCipher {};
-    let pks = public_keys.iter().map(|pk| Some(pk)).collect();
+    let pks = public_keys.iter().map(Some).collect();
     let tree = ShamirTree::reconstruct(&descriptor, &encrypted_shares)?;
     tree.decrypt(pks, nonce, ciphertext, &cipher)
 }
@@ -161,7 +161,7 @@ impl ShamirTree {
                 *leaf_index += 1;
 
                 Ok(ShamirTree::Leaf(
-                    cipher.encrypt_share(share, &pk, hash, index)?,
+                    cipher.encrypt_share(share, pk, hash, index)?,
                 ))
             }
             KeylessDescriptorTree::Threshold(thresh) => {
@@ -200,7 +200,7 @@ impl ShamirTree {
         ensure!(keyless_node.is_some(), Error::NoKeysRequired);
 
         let mut leaf_index = 0;
-        let tree = ShamirTree::reconstruct_tree(&keyless_node.unwrap(), &shares, &mut leaf_index)?;
+        let tree = ShamirTree::reconstruct_tree(&keyless_node.unwrap(), shares, &mut leaf_index)?;
 
         ensure! {
             leaf_index == shares.len(),
@@ -325,7 +325,7 @@ impl ShamirTree {
                     let nodes_required = thresh.k() - shares.len();
                     let min_keys_required = keys_required[0..nodes_required].iter().sum();
 
-                    return Err(Error::KeysRequired(min_keys_required));
+                    Err(Error::KeysRequired(min_keys_required))
                 }
             }
         }
@@ -405,14 +405,14 @@ mod tests {
         k: usize,
         n: usize,
     ) -> (Descriptor<DescriptorPublicKey>, Vec<DescriptorPublicKey>) {
-        let mut pubkeys_vec = Vec::new();
+        let mut pubkeys = Vec::new();
 
         for i in 1..=n as u32 {
             let pubkey_val = create_test_key(3 * i);
-            pubkeys_vec.push(pubkey_val);
+            pubkeys.push(pubkey_val);
         }
 
-        let pubkey_strs_vec: Vec<String> = pubkeys_vec
+        let pubkey_strs_vec: Vec<String> = pubkeys
             .iter()
             .map(|pk_val| pk_val.to_string())
             .collect();
@@ -420,7 +420,7 @@ mod tests {
         let desc_str = format!("wsh(multi({},{}))", k, pubkey_strs_vec.join(","));
         let descriptor = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        (descriptor, pubkeys_vec)
+        (descriptor, pubkeys)
     }
 
     // Helper to get plaintext, ciphertext, and encrypted shares
@@ -497,15 +497,15 @@ mod tests {
 
     #[test]
     fn test_multi_key_threshold_1of2() {
-        let (descriptor, pubkeys_vec) = create_threshold_descriptor(1, 2);
+        let (descriptor, pubkeys) = create_threshold_descriptor(1, 2);
 
         let (shares, plaintext, ciphertext) = get_encrypted_data(descriptor.clone());
 
         assert_eq!(shares.len(), 2, "1-of-2 multisig should produce 2 shares");
 
         // Test with different key combinations
-        for i in 0..2 {
-            let key_subset_vec = vec![pubkeys_vec[i].clone()];
+        for key in pubkeys {
+            let key_subset_vec = vec![key.clone()];
             let decrypted_plaintext = decrypt_with_authenticated_shards(
                 descriptor.clone(),
                 shares.clone(),
@@ -524,7 +524,7 @@ mod tests {
 
     #[test]
     fn test_multi_key_threshold_2of3() {
-        let (descriptor, pubkeys_vec) = create_threshold_descriptor(2, 3);
+        let (descriptor, pubkeys) = create_threshold_descriptor(2, 3);
 
         let (shares, plaintext, ciphertext) = get_encrypted_data(descriptor.clone());
 
@@ -533,7 +533,7 @@ mod tests {
         // Test with different key combinations
         for i in 0..3 {
             for j in (i + 1)..3 {
-                let key_subset_vec = vec![pubkeys_vec[i].clone(), pubkeys_vec[j].clone()];
+                let key_subset_vec = vec![pubkeys[i].clone(), pubkeys[j].clone()];
                 let decrypted_plaintext = decrypt_with_authenticated_shards(
                     descriptor.clone(),
                     shares.clone(),
@@ -551,8 +551,8 @@ mod tests {
         }
 
         // Test with insufficient keys (should fail)
-        for i in 0..3 {
-            let single_key_vec = vec![pubkeys_vec[i].clone()];
+        for key in pubkeys {
+            let single_key_vec = vec![key.clone()];
             let result = decrypt_with_authenticated_shards(
                 descriptor.clone(),
                 shares.clone(),
@@ -858,7 +858,7 @@ mod tests {
 
     #[test]
     fn test_multi_key_threshold_1of2_with_full_secrecy() {
-        let (descriptor, pubkeys_vec) = create_threshold_descriptor(1, 2);
+        let (descriptor, pubkeys) = create_threshold_descriptor(1, 2);
         let (shares, plaintext, ciphertext) =
             get_encrypted_data_with_full_secrecy(descriptor.clone());
 
@@ -868,8 +868,8 @@ mod tests {
             "1-of-2 multisig should produce 2 shares (unauthenticated)"
         );
 
-        for i in 0..2 {
-            let key_subset_vec = vec![pubkeys_vec[i].clone()];
+        for key in pubkeys {
+            let key_subset_vec = vec![key.clone()];
             let decrypted_plaintext = decrypt_with_full_secrecy(
                 descriptor.clone(),
                 shares.clone(),
@@ -888,7 +888,7 @@ mod tests {
 
     #[test]
     fn test_multi_key_threshold_2of3_with_full_secrecy() {
-        let (descriptor, pubkeys_vec) = create_threshold_descriptor(2, 3);
+        let (descriptor, pubkeys) = create_threshold_descriptor(2, 3);
         let (shares, plaintext, ciphertext) =
             get_encrypted_data_with_full_secrecy(descriptor.clone());
 
@@ -900,7 +900,7 @@ mod tests {
 
         for i in 0..3 {
             for j in (i + 1)..3 {
-                let key_subset_vec = vec![pubkeys_vec[i].clone(), pubkeys_vec[j].clone()];
+                let key_subset_vec = vec![pubkeys[i].clone(), pubkeys[j].clone()];
                 let decrypted_plaintext = decrypt_with_full_secrecy(
                     descriptor.clone(),
                     shares.clone(),
@@ -917,8 +917,8 @@ mod tests {
             }
         }
 
-        for i in 0..3 {
-            let single_key_vec = vec![pubkeys_vec[i].clone()];
+        for key in pubkeys {
+            let single_key_vec = vec![key.clone()];
             let result = decrypt_with_full_secrecy(
                 descriptor.clone(),
                 shares.clone(),

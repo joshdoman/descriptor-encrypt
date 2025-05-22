@@ -147,7 +147,7 @@ pub fn encrypt(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
 /// Tradeoffs:
 /// - More private: no information is revealed from partial decryptions
 /// - Slower to decrypt: must try all possible combinations of keys. This is O((N+1)^K),
-///  where N is the number of keys and K is the number of shares.
+///   where N is the number of keys and K is the number of shares.
 pub fn encrypt_with_full_secrecy(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
     encrypt_with_version(V1, desc)
 }

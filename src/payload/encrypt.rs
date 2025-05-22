@@ -101,8 +101,9 @@ pub fn decrypt_with_full_secrecy(
     choices_for_each_slot.push(None);
 
     // Create an iterator that will produce all combinations.
-    let combinations_iterator = std::iter::repeat_n(choices_for_each_slot.iter().cloned(), num_slots)
-        .multi_cartesian_product();
+    let combinations_iterator =
+        std::iter::repeat_n(choices_for_each_slot.iter().cloned(), num_slots)
+            .multi_cartesian_product();
 
     // Iterate through each generated combination and attempt decryption.
     for key_combination in combinations_iterator {

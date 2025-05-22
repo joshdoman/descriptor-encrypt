@@ -130,9 +130,14 @@ pub fn decrypt_with_full_secrecy(
     let cipher = UnauthenticatedCipher {};
     let num_slots = encrypted_shares.len();
 
+    // Deduplicate public keys
+    let mut unique_keys = public_keys.clone();
+    unique_keys.sort();
+    unique_keys.dedup();
+
     // Each slot can hold any one of the provided public keys or None.
     let mut choices_for_each_slot: Vec<Option<&DescriptorPublicKey>> =
-        public_keys.iter().map(Some).collect();
+        unique_keys.iter().map(Some).collect();
     choices_for_each_slot.push(None);
 
     // Create an iterator that will produce all combinations.

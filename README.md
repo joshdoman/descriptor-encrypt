@@ -58,7 +58,7 @@ The executable will be located at `target/release/descriptor-encrypt`.
     *   `<DESCRIPTOR_STRING>`: The Bitcoin descriptor string to encrypt.
 
     **Options**:
-    *   `-w, --with-full-secrecy`: Enable full secrecy mode, which leaks no information about key inclusion without full decryption.
+    *   `-w, --with-full-secrecy`: Enables full secrecy mode, which leaks no information about key inclusion without full decryption.
 
 *   #### Decrypt a Descriptor
     Decrypts hex-encoded encrypted descriptor data using a set of public keys.

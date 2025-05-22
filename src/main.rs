@@ -34,7 +34,7 @@ enum Commands {
 struct EncryptArgs {
     /// The Bitcoin descriptor string to encrypt
     descriptor: String,
-    /// Enable full secrecy mode, which leaks no information about key inclusion without full decryption.
+    /// Enables full secrecy mode, which leaks no information about key inclusion without full decryption.
     #[clap(short, long)]
     with_full_secrecy: bool,
 }

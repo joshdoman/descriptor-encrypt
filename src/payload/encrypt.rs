@@ -15,7 +15,7 @@ use miniscript::{
 };
 use sha2::{Digest, Sha256};
 
-use super::descriptor_node::{DescriptorNode, ToDescriptorNode};
+use super::descriptor_tree::{KeylessDescriptorTree, ToDescriptorTree};
 use super::shamir::{Share, reconstruct_secret, split_secret};
 
 type Data = Vec<u8>;
@@ -23,11 +23,10 @@ type EncryptedShare = [u8; 48];
 type Nonce = [u8; 12];
 type Secret = [u8; 32];
 
-type ShamirThreshold = Threshold<ShamirNode, 0>;
+type ShamirThreshold = Threshold<ShamirTree, 0>;
 
 #[derive(Clone, Debug)]
-enum ShamirNode {
-    Unsatisfiable(),
+enum ShamirTree {
     Leaf(EncryptedShare),
     Threshold(ShamirThreshold),
 }
@@ -40,7 +39,7 @@ enum ShamirNode {
 /// corresponding public key in the descriptor, the ciphertext, and the key index.
 ///
 /// # Arguments
-/// - `descriptor_node`: The descriptor governing how the master secret is sharded and keys are derived.
+/// - `descriptor_tree`: The descriptor governing how the master secret is sharded and keys are derived.
 /// - `master_encryption_key`: The 32-byte secret key. This key is used for primary payload encryption AND is the secret that gets sharded.
 /// - `nonce`: The 12-byte nonce for encrypting the `plaintext`.
 /// - `plaintext`: The data to be encrypted.
@@ -55,7 +54,7 @@ pub fn encrypt_payload_and_shard_key(
     nonce: Nonce,
     plaintext: Data,
 ) -> Result<(Vec<EncryptedShare>, Data)> {
-    let keyless_node = descriptor.to_node().prune_keyless();
+    let keyless_node = descriptor.to_tree().prune_keyless();
 
     ensure!(keyless_node.is_some(), Error::NoKeysRequired);
 
@@ -68,7 +67,7 @@ pub fn encrypt_payload_and_shard_key(
     hasher.update(&ciphertext);
     let hash = hasher.finalize();
 
-    let tree = ShamirNode::build_tree(
+    let tree = ShamirTree::build_tree(
         &keyless_node.unwrap(),
         master_encryption_key.to_vec(),
         &hash.to_vec(),
@@ -82,7 +81,7 @@ pub fn encrypt_payload_and_shard_key(
 /// Reconstructs the master secret from its encrypted Shamir shares and decrypts the payload ciphertext.
 ///
 /// # Arguments
-/// - `descriptor_node`: The descriptor used during encryption.
+/// - `descriptor_tree`: The descriptor used during encryption.
 /// - `encrypted_shares`: The list of encrypted Shamir shares of the master secret.
 /// - `public_keys`: The public keys available to attempt decryption of shares.
 /// - `nonce`: The 12-byte nonce used for the original payload encryption.
@@ -97,13 +96,13 @@ pub fn recover_key_and_decrypt_payload(
     nonce: Nonce,
     ciphertext: Data,
 ) -> Result<Data> {
-    let keyless_node = descriptor.to_node().prune_keyless();
+    let keyless_node = descriptor.to_tree().prune_keyless();
 
     ensure!(keyless_node.is_some(), Error::NoKeysRequired);
 
     let mut leaf_index = 0;
     let tree =
-        ShamirNode::reconstruct_tree(&keyless_node.unwrap(), &encrypted_shares, &mut leaf_index)?;
+        ShamirTree::reconstruct_tree(&keyless_node.unwrap(), &encrypted_shares, &mut leaf_index)?;
 
     ensure! {
         leaf_index == encrypted_shares.len(),
@@ -113,16 +112,16 @@ pub fn recover_key_and_decrypt_payload(
     tree.decrypt(public_keys, nonce, ciphertext)
 }
 
-impl ShamirNode {
+impl ShamirTree {
     /// Constructs a tree of encrypted shamir shares
     fn build_tree(
-        node: &DescriptorNode<DescriptorPublicKey>,
+        node: &KeylessDescriptorTree<DescriptorPublicKey>,
         share: Data,
         hash: &Data,
         leaf_index: &mut usize,
     ) -> Result<Self> {
         match node {
-            DescriptorNode::Key(pk) => {
+            KeylessDescriptorTree::Key(pk) => {
                 let (nonce, cipher) = Self::get_cipher(pk, hash, *leaf_index)?;
                 let encrypted_share = cipher
                     .encrypt(&nonce, share.as_ref())
@@ -131,11 +130,11 @@ impl ShamirNode {
 
                 assert_eq!(encrypted_share.len(), 48);
 
-                Ok(ShamirNode::Leaf(
+                Ok(ShamirTree::Leaf(
                     encrypted_share.as_slice().try_into().unwrap(),
                 ))
             }
-            DescriptorNode::Threshold(thresh) => {
+            KeylessDescriptorTree::Threshold(thresh) => {
                 let xs: Vec<u8> = (1..=thresh.n() as u8).collect();
                 let shares = split_secret(&share, thresh.k(), &xs).map_err(|e| anyhow!(e))?;
                 let mut shamir_nodes = Vec::new();
@@ -145,19 +144,16 @@ impl ShamirNode {
                 }
                 let shamir_thresh = ShamirThreshold::new(thresh.k(), shamir_nodes)?;
 
-                Ok(ShamirNode::Threshold(shamir_thresh))
+                Ok(ShamirTree::Threshold(shamir_thresh))
             }
-            DescriptorNode::Keyless() => unreachable!("node is keyless"),
-            DescriptorNode::Unsatisfiable() => Ok(ShamirNode::Unsatisfiable()),
         }
     }
 
     /// Returns a list of encrypted shares (in order)
     fn extract_encrypted_shares(&self) -> Vec<EncryptedShare> {
         match self {
-            ShamirNode::Unsatisfiable() => vec![],
-            ShamirNode::Leaf(share) => vec![*share],
-            ShamirNode::Threshold(thresh) => thresh
+            ShamirTree::Leaf(share) => vec![*share],
+            ShamirTree::Threshold(thresh) => thresh
                 .iter()
                 .flat_map(|node| node.extract_encrypted_shares())
                 .collect(),
@@ -166,12 +162,12 @@ impl ShamirNode {
 
     /// Reconstructs a shamir node from a descriptor node and a list of shares.
     fn reconstruct_tree(
-        node: &DescriptorNode<DescriptorPublicKey>,
+        node: &KeylessDescriptorTree<DescriptorPublicKey>,
         shares: &Vec<EncryptedShare>,
         leaf_index: &mut usize,
     ) -> Result<Self> {
         match node {
-            DescriptorNode::Key(_) => {
+            KeylessDescriptorTree::Key(_) => {
                 ensure! {
                     *leaf_index < shares.len(),
                     Error::InsufficientShares
@@ -180,9 +176,9 @@ impl ShamirNode {
                 let encrypted_share = shares[*leaf_index];
                 *leaf_index += 1;
 
-                Ok(ShamirNode::Leaf(encrypted_share))
+                Ok(ShamirTree::Leaf(encrypted_share))
             }
-            DescriptorNode::Threshold(thresh) => {
+            KeylessDescriptorTree::Threshold(thresh) => {
                 let mut shamir_nodes = Vec::new();
                 for node_inner in thresh.iter() {
                     let tree = Self::reconstruct_tree(node_inner, shares, leaf_index)?;
@@ -190,10 +186,8 @@ impl ShamirNode {
                 }
                 let shamir_thresh = ShamirThreshold::new(thresh.k(), shamir_nodes)?;
 
-                Ok(ShamirNode::Threshold(shamir_thresh))
+                Ok(ShamirTree::Threshold(shamir_thresh))
             }
-            DescriptorNode::Keyless() => unreachable!("node is keyless"),
-            DescriptorNode::Unsatisfiable() => Ok(ShamirNode::Unsatisfiable())
         }
     }
 
@@ -230,8 +224,7 @@ impl ShamirNode {
         decrypt_leaves: bool,
     ) -> Result<Data, Error> {
         match self {
-            ShamirNode::Unsatisfiable() => Ok(vec![]),
-            ShamirNode::Leaf(encrypted_share) => {
+            ShamirTree::Leaf(encrypted_share) => {
                 let index = *leaf_index;
                 *leaf_index += 1;
 
@@ -252,7 +245,7 @@ impl ShamirNode {
 
                 Err(Error::KeysRequired(1))
             }
-            ShamirNode::Threshold(thresh) => {
+            ShamirTree::Threshold(thresh) => {
                 let mut shares = Vec::new();
                 let mut keys_required = Vec::new();
                 for (i, node) in thresh.iter().enumerate() {

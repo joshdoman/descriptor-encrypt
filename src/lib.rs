@@ -130,7 +130,7 @@ use bitcoin::bip32::DerivationPath;
 use miniscript::{Descriptor, DescriptorPublicKey};
 use sha2::{Digest, Sha256};
 
-use crate::payload::ToDescriptorNode;
+use crate::payload::ToDescriptorTree;
 
 const V0: u8 = 0u8;
 
@@ -175,7 +175,7 @@ pub fn decrypt(
 
     let (template, size) = template::decode(data)?;
 
-    let num_keys = template.clone().to_node().extract_keys().len();
+    let num_keys = template.clone().to_tree().extract_keys().len();
     let encrypted_shares: Vec<[u8; 48]> = data[size..size + num_keys * 48]
         .chunks_exact(48)
         .map(|chunk| chunk.try_into().unwrap())
@@ -227,7 +227,7 @@ pub fn get_origin_derivation_paths(data: &[u8]) -> Result<Vec<DerivationPath>> {
     let (template, _) = template::decode(data)?;
 
     let mut paths = Vec::new();
-    for key in template.clone().to_node().extract_keys() {
+    for key in template.clone().to_tree().extract_keys() {
         let origin = match key {
             DescriptorPublicKey::XPub(xpub) => xpub.origin,
             DescriptorPublicKey::MultiXPub(xpub) => xpub.origin,
@@ -245,7 +245,7 @@ pub fn get_origin_derivation_paths(data: &[u8]) -> Result<Vec<DerivationPath>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::payload::ToDescriptorNode;
+    use crate::payload::ToDescriptorTree;
     use miniscript::{Descriptor, DescriptorPublicKey};
     use std::str::FromStr;
 
@@ -265,7 +265,7 @@ mod tests {
         for desc_str in descriptors {
             let desc = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
 
-            let keys = desc.clone().to_node().extract_keys();
+            let keys = desc.clone().to_tree().extract_keys();
             let ciphertext = encrypt(desc.clone()).unwrap();
             assert_eq!(desc, decrypt(&ciphertext, keys).unwrap());
         }

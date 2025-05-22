@@ -6,59 +6,84 @@ use miniscript::{
     miniscript::decode::Terminal,
 };
 
-type DescriptorNodeThreshold<Pk> = Threshold<DescriptorNode<Pk>, 0>;
+type DescriptorTreeThreshold<Pk> = Threshold<DescriptorTree<Pk>, 0>;
+type KeylessDescriptorTreeThreshold<Pk> = Threshold<KeylessDescriptorTree<Pk>, 0>;
 
-/// A node can be keyless, a key, or a threshold of nodes
+/// A tree can be keyless, a key, or a threshold of trees
 #[derive(Clone, Debug)]
-pub enum DescriptorNode<Pk: MiniscriptKey> {
-    /// An unsatisfiable keyless node
-    Unsatisfiable(),
-    /// A satisfiable keyless node
-    Keyless(),
+pub enum DescriptorTree<Pk: MiniscriptKey> {
+    /// A keyless tree that can be either satisfiable or unsatisfiable
+    Keyless(bool),
     /// A key
     Key(Pk),
-    /// A threshold of nodes
-    Threshold(DescriptorNodeThreshold<Pk>),
+    /// A threshold of trees
+    Threshold(DescriptorTreeThreshold<Pk>),
 }
 
-impl<Pk: MiniscriptKey> DescriptorNode<Pk> {
+/// A tree can a key, or a threshold of trees
+#[derive(Clone, Debug)]
+pub enum KeylessDescriptorTree<Pk: MiniscriptKey> {
+    /// A key
+    Key(Pk),
+    /// A threshold of trees
+    Threshold(KeylessDescriptorTreeThreshold<Pk>),
+}
+
+impl<Pk: MiniscriptKey> DescriptorTree<Pk> {
     /// Returns a list of keys in the descriptor
     pub fn extract_keys(&self) -> Vec<Pk> {
         match self {
-            DescriptorNode::Unsatisfiable() => Vec::new(),
-            DescriptorNode::Keyless() => Vec::new(),
-            DescriptorNode::Key(pk) => vec![pk.clone()],
-            DescriptorNode::Threshold(thresh) => {
-                thresh.iter().flat_map(|node| node.extract_keys()).collect()
+            DescriptorTree::Keyless(_) => Vec::new(),
+            DescriptorTree::Key(pk) => vec![pk.clone()],
+            DescriptorTree::Threshold(thresh) => {
+                thresh.iter().flat_map(|tree| tree.extract_keys()).collect()
             }
         }
     }
 
-    /// Prune keyless nodes assuming they evaluate to `true`.
+    /// Prune keyless trees assuming they evaluate to `true`.
     /// Sets new_k = max(old_k - num(keyless), 0) in each threshold.
-    pub fn prune_keyless(&self) -> Option<DescriptorNode<Pk>> {
-        match self {
-            DescriptorNode::Unsatisfiable() => Some(self.clone()),
-            DescriptorNode::Keyless() => None,
-            DescriptorNode::Key(_) => Some(self.clone()),
-            DescriptorNode::Threshold(thresh) => {
-                let keyed_nodes: Vec<DescriptorNode<Pk>> = thresh
-                    .iter()
-                    .filter_map(|node| node.prune_keyless())
-                    .collect();
+    pub fn prune_keyless(&self) -> Option<KeylessDescriptorTree<Pk>> {
+        let (_, pruned_tree) = self.prune_keyless_with_satisfiability();
+        pruned_tree
+    }
 
-                let new_k = if thresh.k() > thresh.n() - keyed_nodes.len() {
-                    thresh.k() - (thresh.n() - keyed_nodes.len())
+    // Returns pruned tree and whether its satisfiable
+    pub fn prune_keyless_with_satisfiability(&self) -> (bool, Option<KeylessDescriptorTree<Pk>>) {
+        match self {
+            DescriptorTree::Keyless(satisfiable) => (*satisfiable, None),
+            DescriptorTree::Key(pk) => (true, Some(KeylessDescriptorTree::Key(pk.clone()))),
+            DescriptorTree::Threshold(thresh) => {
+                let mut assume_satisfied = 0;
+                let mut keyed_subtrees = Vec::new();
+                for t in thresh.iter() {
+                    match t.prune_keyless_with_satisfiability() {
+                        (_, Some(subtree)) => {
+                            keyed_subtrees.push(subtree);
+                        }
+                        (true, None) => assume_satisfied += 1,
+                        (false, None) => {},
+                    }
+                }
+
+                let new_k = if thresh.k() > assume_satisfied {
+                    thresh.k() - assume_satisfied
                 } else {
                     0
                 };
 
-                match (new_k, keyed_nodes.len()) {
-                    (0, _) => None,
-                    (1, 1) => Some(keyed_nodes.first().unwrap().clone()),
-                    (_, _) => DescriptorNodeThreshold::new(new_k, keyed_nodes)
-                        .ok()
-                        .map(DescriptorNode::Threshold),
+                match (new_k, keyed_subtrees.len()) {
+                    (0, _) => (true, None),
+                    (1, 1) => (true, Some(keyed_subtrees.first().unwrap().clone())),
+                    (k, n) => {
+                        if k <= n {
+                            (true, KeylessDescriptorTreeThreshold::new(new_k, keyed_subtrees)
+                            .ok()
+                            .map(KeylessDescriptorTree::Threshold))
+                        } else {
+                            (false, None)
+                        }
+                    }
                 }
             }
         }
@@ -68,158 +93,158 @@ impl<Pk: MiniscriptKey> DescriptorNode<Pk> {
     where
         Ctx: ScriptContext,
     {
-        let node0 = ms0.to_node();
-        let node1 = ms1.to_node();
-        let thresh = DescriptorNodeThreshold::and(node0, node1);
+        let tree0 = ms0.to_tree();
+        let tree1 = ms1.to_tree();
+        let thresh = DescriptorTreeThreshold::and(tree0, tree1);
 
-        DescriptorNode::Threshold(thresh)
+        DescriptorTree::Threshold(thresh)
     }
 
     fn from_ms_or<Ctx>(ms0: &Miniscript<Pk, Ctx>, ms1: &Miniscript<Pk, Ctx>) -> Self
     where
         Ctx: ScriptContext,
     {
-        let node0 = ms0.to_node();
-        let node1 = ms1.to_node();
-        let thresh = DescriptorNodeThreshold::or(node0, node1);
+        let tree0 = ms0.to_tree();
+        let tree1 = ms1.to_tree();
+        let thresh = DescriptorTreeThreshold::or(tree0, tree1);
 
-        DescriptorNode::Threshold(thresh)
+        DescriptorTree::Threshold(thresh)
     }
 
     fn from_sortedmulti<Ctx>(sortedmulti: &SortedMultiVec<Pk, Ctx>) -> Self
     where
         Ctx: ScriptContext,
     {
-        let nodes = sortedmulti
+        let trees = sortedmulti
             .pks()
             .iter()
-            .map(|pk| DescriptorNode::Key(pk.clone()))
+            .map(|pk| DescriptorTree::Key(pk.clone()))
             .collect();
-        let thresh = DescriptorNodeThreshold::new(sortedmulti.k(), nodes).unwrap();
+        let thresh = DescriptorTreeThreshold::new(sortedmulti.k(), trees).unwrap();
 
-        DescriptorNode::Threshold(thresh)
+        DescriptorTree::Threshold(thresh)
     }
 }
 
-/// A trait to construct a descriptor node
-pub trait ToDescriptorNode<Pk: MiniscriptKey> {
-    /// Returns a descriptor node
-    fn to_node(&self) -> DescriptorNode<Pk>;
+/// A trait to construct a descriptor tree
+pub trait ToDescriptorTree<Pk: MiniscriptKey> {
+    /// Returns a descriptor tree
+    fn to_tree(&self) -> DescriptorTree<Pk>;
 }
 
-impl<Pk: MiniscriptKey> ToDescriptorNode<Pk> for Descriptor<Pk> {
-    fn to_node(&self) -> DescriptorNode<Pk> {
+impl<Pk: MiniscriptKey> ToDescriptorTree<Pk> for Descriptor<Pk> {
+    fn to_tree(&self) -> DescriptorTree<Pk> {
         match self {
-            Descriptor::Sh(sh) => sh.to_node(),
-            Descriptor::Wsh(wsh) => wsh.to_node(),
-            Descriptor::Tr(tr) => tr.to_node(),
-            Descriptor::Wpkh(wpkh) => DescriptorNode::Key(wpkh.clone().into_inner()),
-            Descriptor::Pkh(pkh) => DescriptorNode::Key(pkh.clone().into_inner()),
-            Descriptor::Bare(bare) => bare.as_inner().to_node(),
+            Descriptor::Sh(sh) => sh.to_tree(),
+            Descriptor::Wsh(wsh) => wsh.to_tree(),
+            Descriptor::Tr(tr) => tr.to_tree(),
+            Descriptor::Wpkh(wpkh) => DescriptorTree::Key(wpkh.clone().into_inner()),
+            Descriptor::Pkh(pkh) => DescriptorTree::Key(pkh.clone().into_inner()),
+            Descriptor::Bare(bare) => bare.as_inner().to_tree(),
         }
     }
 }
 
-impl<Pk: MiniscriptKey> ToDescriptorNode<Pk> for Sh<Pk> {
-    fn to_node(&self) -> DescriptorNode<Pk> {
+impl<Pk: MiniscriptKey> ToDescriptorTree<Pk> for Sh<Pk> {
+    fn to_tree(&self) -> DescriptorTree<Pk> {
         match self.as_inner() {
             ShInner::SortedMulti(sortedmulti) => {
-                DescriptorNode::from_sortedmulti::<Legacy>(&sortedmulti)
+                DescriptorTree::from_sortedmulti::<Legacy>(&sortedmulti)
             }
-            ShInner::Wsh(wsh) => wsh.to_node(),
-            ShInner::Wpkh(wpkh) => DescriptorNode::Key(wpkh.clone().into_inner()),
-            ShInner::Ms(ms) => ms.to_node(),
+            ShInner::Wsh(wsh) => wsh.to_tree(),
+            ShInner::Wpkh(wpkh) => DescriptorTree::Key(wpkh.clone().into_inner()),
+            ShInner::Ms(ms) => ms.to_tree(),
         }
     }
 }
 
-impl<Pk: MiniscriptKey> ToDescriptorNode<Pk> for Wsh<Pk> {
-    fn to_node(&self) -> DescriptorNode<Pk> {
+impl<Pk: MiniscriptKey> ToDescriptorTree<Pk> for Wsh<Pk> {
+    fn to_tree(&self) -> DescriptorTree<Pk> {
         match self.as_inner() {
             WshInner::SortedMulti(sortedmulti) => {
-                DescriptorNode::from_sortedmulti::<Segwitv0>(&sortedmulti)
+                DescriptorTree::from_sortedmulti::<Segwitv0>(&sortedmulti)
             }
-            WshInner::Ms(ms) => ms.to_node(),
+            WshInner::Ms(ms) => ms.to_tree(),
         }
     }
 }
 
-impl<Pk: MiniscriptKey> ToDescriptorNode<Pk> for Tr<Pk> {
-    fn to_node(&self) -> DescriptorNode<Pk> {
-        let mut nodes = Vec::new();
-        nodes.push(DescriptorNode::Key(self.internal_key().clone()));
+impl<Pk: MiniscriptKey> ToDescriptorTree<Pk> for Tr<Pk> {
+    fn to_tree(&self) -> DescriptorTree<Pk> {
+        let mut trees = Vec::new();
+        trees.push(DescriptorTree::Key(self.internal_key().clone()));
 
         for (_, ms) in self.iter_scripts() {
-            nodes.push(ms.to_node());
+            trees.push(ms.to_tree());
         }
 
-        let thresh = DescriptorNodeThreshold::or_n(nodes);
+        let thresh = DescriptorTreeThreshold::or_n(trees);
 
-        DescriptorNode::Threshold(thresh)
+        DescriptorTree::Threshold(thresh)
     }
 }
 
-impl<Pk: MiniscriptKey, Ctx: ScriptContext> ToDescriptorNode<Pk> for Miniscript<Pk, Ctx> {
-    fn to_node(&self) -> DescriptorNode<Pk> {
+impl<Pk: MiniscriptKey, Ctx: ScriptContext> ToDescriptorTree<Pk> for Miniscript<Pk, Ctx> {
+    fn to_tree(&self) -> DescriptorTree<Pk> {
         match &self.node {
-            Terminal::True => DescriptorNode::Keyless(),
-            Terminal::False => DescriptorNode::Unsatisfiable(),
-            Terminal::PkK(pk) => DescriptorNode::Key(pk.clone()),
-            Terminal::PkH(pk) => DescriptorNode::Key(pk.clone()),
-            Terminal::RawPkH(_) => DescriptorNode::Keyless(),
-            Terminal::After(_) => DescriptorNode::Keyless(),
-            Terminal::Older(_) => DescriptorNode::Keyless(),
-            Terminal::Sha256(_) => DescriptorNode::Keyless(),
-            Terminal::Hash256(_) => DescriptorNode::Keyless(),
-            Terminal::Ripemd160(_) => DescriptorNode::Keyless(),
-            Terminal::Hash160(_) => DescriptorNode::Keyless(),
-            Terminal::Alt(ms) => ms.to_node(),
-            Terminal::Swap(ms) => ms.to_node(),
-            Terminal::Check(ms) => ms.to_node(),
-            Terminal::DupIf(ms) => ms.to_node(),
-            Terminal::Verify(ms) => ms.to_node(),
-            Terminal::NonZero(ms) => ms.to_node(),
-            Terminal::ZeroNotEqual(ms) => ms.to_node(),
-            Terminal::AndV(ms0, ms1) => DescriptorNode::from_ms_and(ms0, ms1),
-            Terminal::AndB(ms0, ms1) => DescriptorNode::from_ms_and(ms0, ms1),
+            Terminal::True => DescriptorTree::Keyless(true),
+            Terminal::False => DescriptorTree::Keyless(false),
+            Terminal::PkK(pk) => DescriptorTree::Key(pk.clone()),
+            Terminal::PkH(pk) => DescriptorTree::Key(pk.clone()),
+            Terminal::RawPkH(_) => DescriptorTree::Keyless(true),
+            Terminal::After(_) => DescriptorTree::Keyless(true),
+            Terminal::Older(_) => DescriptorTree::Keyless(true),
+            Terminal::Sha256(_) => DescriptorTree::Keyless(true),
+            Terminal::Hash256(_) => DescriptorTree::Keyless(true),
+            Terminal::Ripemd160(_) => DescriptorTree::Keyless(true),
+            Terminal::Hash160(_) => DescriptorTree::Keyless(true),
+            Terminal::Alt(ms) => ms.to_tree(),
+            Terminal::Swap(ms) => ms.to_tree(),
+            Terminal::Check(ms) => ms.to_tree(),
+            Terminal::DupIf(ms) => ms.to_tree(),
+            Terminal::Verify(ms) => ms.to_tree(),
+            Terminal::NonZero(ms) => ms.to_tree(),
+            Terminal::ZeroNotEqual(ms) => ms.to_tree(),
+            Terminal::AndV(ms0, ms1) => DescriptorTree::from_ms_and(ms0, ms1),
+            Terminal::AndB(ms0, ms1) => DescriptorTree::from_ms_and(ms0, ms1),
             Terminal::AndOr(ms0, ms1, ms2) => {
-                let and_node = DescriptorNode::from_ms_and(ms0, ms1);
-                let or_node = ms2.to_node();
-                let thresh = DescriptorNodeThreshold::or(and_node, or_node);
+                let and_tree = DescriptorTree::from_ms_and(ms0, ms1);
+                let or_tree = ms2.to_tree();
+                let thresh = DescriptorTreeThreshold::or(and_tree, or_tree);
 
-                DescriptorNode::Threshold(thresh)
+                DescriptorTree::Threshold(thresh)
             }
-            Terminal::OrB(ms0, ms1) => DescriptorNode::from_ms_or(ms0, ms1),
-            Terminal::OrC(ms0, ms1) => DescriptorNode::from_ms_or(ms0, ms1),
-            Terminal::OrD(ms0, ms1) => DescriptorNode::from_ms_or(ms0, ms1),
-            Terminal::OrI(ms0, ms1) => DescriptorNode::from_ms_or(ms0, ms1),
+            Terminal::OrB(ms0, ms1) => DescriptorTree::from_ms_or(ms0, ms1),
+            Terminal::OrC(ms0, ms1) => DescriptorTree::from_ms_or(ms0, ms1),
+            Terminal::OrD(ms0, ms1) => DescriptorTree::from_ms_or(ms0, ms1),
+            Terminal::OrI(ms0, ms1) => DescriptorTree::from_ms_or(ms0, ms1),
             Terminal::Thresh(thresh) => {
-                let mut nodes = Vec::new();
+                let mut trees = Vec::new();
                 for ms in thresh.iter() {
-                    let node = ms.to_node();
-                    nodes.push(node);
+                    let tree = ms.to_tree();
+                    trees.push(tree);
                 }
-                let thresh = DescriptorNodeThreshold::new(thresh.k(), nodes).unwrap();
+                let thresh = DescriptorTreeThreshold::new(thresh.k(), trees).unwrap();
 
-                DescriptorNode::Threshold(thresh)
+                DescriptorTree::Threshold(thresh)
             }
             Terminal::Multi(thresh) => {
-                let nodes = thresh
+                let trees = thresh
                     .iter()
-                    .map(|pk| DescriptorNode::Key(pk.clone()))
+                    .map(|pk| DescriptorTree::Key(pk.clone()))
                     .collect();
-                let thresh = DescriptorNodeThreshold::new(thresh.k(), nodes).unwrap();
+                let thresh = DescriptorTreeThreshold::new(thresh.k(), trees).unwrap();
 
-                DescriptorNode::Threshold(thresh)
+                DescriptorTree::Threshold(thresh)
             }
             Terminal::MultiA(thresh) => {
-                let nodes = thresh
+                let trees = thresh
                     .iter()
-                    .map(|pk| DescriptorNode::Key(pk.clone()))
+                    .map(|pk| DescriptorTree::Key(pk.clone()))
                     .collect();
-                let thresh = DescriptorNodeThreshold::new(thresh.k(), nodes).unwrap();
+                let thresh = DescriptorTreeThreshold::new(thresh.k(), trees).unwrap();
 
-                DescriptorNode::Threshold(thresh)
+                DescriptorTree::Threshold(thresh)
             }
         }
     }
@@ -258,9 +283,9 @@ mod tests {
     fn test_extract_keys_single() {
         // Test with a single key
         let key = create_test_key(1);
-        let node = DescriptorNode::Key(key.clone());
+        let tree = DescriptorTree::Key(key.clone());
 
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 1);
         assert!(keys.contains(&key));
     }
@@ -272,16 +297,16 @@ mod tests {
         let key2 = create_test_key(2);
         let key3 = create_test_key(3);
 
-        let nodes = vec![
-            DescriptorNode::Key(key1.clone()),
-            DescriptorNode::Key(key2.clone()),
-            DescriptorNode::Key(key3.clone()),
+        let trees = vec![
+            DescriptorTree::Key(key1.clone()),
+            DescriptorTree::Key(key2.clone()),
+            DescriptorTree::Key(key3.clone()),
         ];
 
-        let thresh = DescriptorNodeThreshold::new(2, nodes).unwrap();
-        let node = DescriptorNode::Threshold(thresh);
+        let thresh = DescriptorTreeThreshold::new(2, trees).unwrap();
+        let tree = DescriptorTree::Threshold(thresh);
 
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 3);
         assert!(keys.contains(&key1));
         assert!(keys.contains(&key2));
@@ -290,20 +315,20 @@ mod tests {
 
     #[test]
     fn test_extract_keys_with_keyless() {
-        // Create a threshold with some keyless nodes
+        // Create a threshold with some keyless trees
         let key1 = create_test_key(1);
         let key2 = create_test_key(2);
 
-        let nodes = vec![
-            DescriptorNode::Key(key1.clone()),
-            DescriptorNode::Keyless::<DescriptorPublicKey>(),
-            DescriptorNode::Key(key2.clone()),
+        let trees = vec![
+            DescriptorTree::Key(key1.clone()),
+            DescriptorTree::Keyless::<DescriptorPublicKey>(true),
+            DescriptorTree::Key(key2.clone()),
         ];
 
-        let thresh = DescriptorNodeThreshold::new(2, nodes).unwrap();
-        let node = DescriptorNode::Threshold(thresh);
+        let thresh = DescriptorTreeThreshold::new(2, trees).unwrap();
+        let tree = DescriptorTree::Threshold(thresh);
 
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 2);
         assert!(keys.contains(&key1));
         assert!(keys.contains(&key2));
@@ -311,54 +336,60 @@ mod tests {
 
     #[test]
     fn test_prune_keyless_single() {
-        // Key nodes should remain unchanged
+        // Key trees should remain unchanged
         let key = create_test_key(1);
-        let node = DescriptorNode::Key(key.clone());
+        let tree = DescriptorTree::Key(key.clone());
 
-        let result = node.prune_keyless();
+        let result = tree.prune_keyless();
         assert!(result.is_some());
 
         match result.unwrap() {
-            DescriptorNode::Key(k) => assert_eq!(k, key),
-            _ => panic!("Expected Key node"),
+            KeylessDescriptorTree::Key(k) => assert_eq!(k, key),
+            _ => panic!("Expected Key tree"),
         }
 
-        // Keyless nodes should return None
-        let node = DescriptorNode::Keyless::<DescriptorPublicKey>();
-        let result = node.prune_keyless();
+        // Keyless trees should return None
+        let tree = DescriptorTree::Keyless::<DescriptorPublicKey>(true);
+        let result = tree.prune_keyless();
         assert!(result.is_none());
     }
 
     #[test]
     fn test_prune_keyless_threshold() {
-        // Create a 2-of-3 threshold with one keyless node
+        // Create a 2-of-3 threshold with one keyless tree
         let key1 = create_test_key(1);
         let key2 = create_test_key(2);
 
-        let nodes = vec![
-            DescriptorNode::Key(key1.clone()),
-            DescriptorNode::Keyless::<DescriptorPublicKey>(),
-            DescriptorNode::Key(key2.clone()),
+        let trees = vec![
+            DescriptorTree::Key(key1.clone()),
+            DescriptorTree::Keyless::<DescriptorPublicKey>(true),
+            DescriptorTree::Keyless::<DescriptorPublicKey>(false),
+            DescriptorTree::Key(key2.clone()),
         ];
 
-        let thresh = DescriptorNodeThreshold::new(2, nodes).unwrap();
-        let node = DescriptorNode::Threshold(thresh);
+        let thresh = DescriptorTreeThreshold::new(2, trees).unwrap();
+        let tree = DescriptorTree::Threshold(thresh);
 
-        let result = node.prune_keyless();
+        let result = tree.prune_keyless();
         assert!(result.is_some());
 
         match result.unwrap() {
-            DescriptorNode::Threshold(t) => {
+            KeylessDescriptorTree::Threshold(t) => {
                 assert_eq!(t.k(), 1);
                 assert_eq!(t.n(), 2);
 
-                // Check that the keyless node was removed
-                let keys: Vec<_> = t.iter().flat_map(|n| n.extract_keys()).collect();
-                assert_eq!(keys.len(), 2);
+                // Check that the keys are the same
+                let mut keys = Vec::new();
+                for subtree in t.iter() {
+                    match subtree {
+                        KeylessDescriptorTree::Key(pk) => keys.push(pk.clone()),
+                        _ => {}
+                    }
+                }
                 assert!(keys.contains(&key1));
                 assert!(keys.contains(&key2));
             }
-            _ => panic!("Expected Threshold node"),
+            _ => panic!("Expected Threshold tree"),
         }
     }
 
@@ -368,82 +399,119 @@ mod tests {
         let key1 = create_test_key(1);
         let key2 = create_test_key(2);
 
-        let nodes = vec![
-            DescriptorNode::Key(key1.clone()),
-            DescriptorNode::Keyless::<DescriptorPublicKey>(),
-            DescriptorNode::Keyless::<DescriptorPublicKey>(),
-            DescriptorNode::Key(key2.clone()),
+        let trees = vec![
+            DescriptorTree::Key(key1.clone()),
+            DescriptorTree::Keyless::<DescriptorPublicKey>(true),
+            DescriptorTree::Keyless::<DescriptorPublicKey>(true),
+            DescriptorTree::Keyless::<DescriptorPublicKey>(false),
+            DescriptorTree::Key(key2.clone()),
         ];
 
-        let thresh = DescriptorNodeThreshold::new(3, nodes).unwrap();
-        let node = DescriptorNode::Threshold(thresh);
+        let thresh = DescriptorTreeThreshold::new(3, trees).unwrap();
+        let tree = DescriptorTree::Threshold(thresh);
 
-        let result = node.prune_keyless();
+        let result = tree.prune_keyless();
         assert!(result.is_some());
 
         match result.unwrap() {
-            DescriptorNode::Threshold(t) => {
+            KeylessDescriptorTree::Threshold(t) => {
                 assert_eq!(t.k(), 1); // Reduced from 3 to 1
                 assert_eq!(t.n(), 2);
 
-                // Check that the keyless nodes were removed
-                let keys: Vec<_> = t.iter().flat_map(|n| n.extract_keys()).collect();
-                assert_eq!(keys.len(), 2);
+                // Check that the keys are the same
+                let mut keys = Vec::new();
+                for subtree in t.iter() {
+                    match subtree {
+                        KeylessDescriptorTree::Key(pk) => keys.push(pk.clone()),
+                        _ => {}
+                    }
+                }
+                assert!(keys.contains(&key1));
+                assert!(keys.contains(&key2));
             }
-            _ => panic!("Expected Threshold node"),
+            _ => panic!("Expected Threshold tree"),
         }
     }
 
     #[test]
-    fn test_prune_keyless_all_nodes_keyless() {
-        // Test a scenario where all nodes are keyless
-        let nodes = vec![
-            DescriptorNode::Keyless::<DescriptorPublicKey>(),
-            DescriptorNode::Keyless::<DescriptorPublicKey>(),
+    fn test_prune_keyless_all_trees_keyless() {
+        // Test a scenario where all trees are keyless
+        let trees = vec![
+            DescriptorTree::Keyless::<DescriptorPublicKey>(true),
+            DescriptorTree::Keyless::<DescriptorPublicKey>(true),
         ];
 
-        let thresh = DescriptorNodeThreshold::new(1, nodes).unwrap();
-        let node = DescriptorNode::Threshold(thresh);
+        let thresh = DescriptorTreeThreshold::new(1, trees).unwrap();
+        let tree = DescriptorTree::Threshold(thresh);
 
-        let result = node.prune_keyless();
+        let result = tree.prune_keyless();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_prune_keyless_k_exceeds_n_due_to_unsatisfiability() {
+        let key1 = create_test_key(1);
+
+        // Test tree with satisfiable pruned leaf
+        let trees = vec![
+            DescriptorTree::Key(key1.clone()),
+            DescriptorTree::Keyless::<DescriptorPublicKey>(true),
+        ];
+
+        let thresh = DescriptorTreeThreshold::new(2, trees).unwrap();
+        let tree = DescriptorTree::Threshold(thresh);
+
+        let result = tree.prune_keyless();
+        assert!(result.is_some());
+
+        // Test tree with unsatisfiable pruned leaf
+        let trees = vec![
+            DescriptorTree::Key(key1.clone()),
+            DescriptorTree::Keyless::<DescriptorPublicKey>(false),
+        ];
+
+        let thresh = DescriptorTreeThreshold::new(2, trees).unwrap();
+        let tree = DescriptorTree::Threshold(thresh);
+
+        let result = tree.prune_keyless();
         assert!(result.is_none());
     }
 
     #[test]
     fn test_prune_keyless_single_key_after_pruning() {
-        // Create a threshold with one key and one keyless node
+        // Create a threshold with one key and one keyless tree
         let key = create_test_key(1);
 
-        let nodes = vec![
-            DescriptorNode::Key(key.clone()),
-            DescriptorNode::Keyless::<DescriptorPublicKey>(),
+        let trees = vec![
+            DescriptorTree::Key(key.clone()),
+            DescriptorTree::Keyless::<DescriptorPublicKey>(true),
         ];
 
-        let thresh = DescriptorNodeThreshold::new(2, nodes).unwrap();
-        let node = DescriptorNode::Threshold(thresh);
+        let thresh = DescriptorTreeThreshold::new(2, trees).unwrap();
+        let tree = DescriptorTree::Threshold(thresh);
 
-        let result = node.prune_keyless();
+        let result = tree.prune_keyless();
         assert!(result.is_some());
 
-        // After pruning, we should be left with just the key node
+        // After pruning, we should be left with just the key tree
         match result.unwrap() {
-            DescriptorNode::Key(k) => assert_eq!(k, key),
-            _ => panic!("Expected a single Key node"),
+            KeylessDescriptorTree::Key(k) => assert_eq!(k, key),
+            _ => panic!("Expected a single Key tree"),
         }
     }
 
     #[test]
-    fn test_to_node_wpkh() {
+    fn test_to_tree_wpkh() {
         // Test WPKH descriptor
         let key = create_test_key(1);
         let desc_str = format!("wpkh({})", key);
         let desc = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
-        // Should be a single key node
-        match node {
-            DescriptorNode::Key(k) => match (k, key) {
+        // Should be a single key tree
+        match tree {
+            DescriptorTree::Key(k) => match (k, key) {
                 (
                     DescriptorPublicKey::Single(single_k),
                     DescriptorPublicKey::Single(single_key),
@@ -458,42 +526,42 @@ mod tests {
                 },
                 _ => panic!("Expected Single keys"),
             },
-            _ => panic!("Expected Key node for wpkh descriptor"),
+            _ => panic!("Expected Key tree for wpkh descriptor"),
         }
     }
 
     #[test]
-    fn test_to_node_pkh() {
+    fn test_to_tree_pkh() {
         // Test PKH descriptor
         let key = create_test_key(1);
         let desc_str = format!("pkh({})", key);
         let desc = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
-        // Should be a single key node
-        match node {
-            DescriptorNode::Key(_) => {}
-            _ => panic!("Expected Key node for pkh descriptor"),
+        // Should be a single key tree
+        match tree {
+            DescriptorTree::Key(_) => {}
+            _ => panic!("Expected Key tree for pkh descriptor"),
         }
     }
 
     #[test]
-    fn test_to_node_bare_pk() {
+    fn test_to_tree_bare_pk() {
         let desc_str = "pk(020000000000000000000000000000000000000000000000000000000000000002)";
         let desc = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
-        // Should be a single key node
-        match node {
-            DescriptorNode::Key(_) => {}
-            _ => panic!("Expected Key node for pkh descriptor"),
+        // Should be a single key tree
+        match tree {
+            DescriptorTree::Key(_) => {}
+            _ => panic!("Expected Key tree for pkh descriptor"),
         }
     }
 
     #[test]
-    fn test_to_node_wsh_multi() {
+    fn test_to_tree_wsh_multi() {
         // Test WSH with a multisig
         let key1 = create_test_key(1);
         let key2 = create_test_key(2);
@@ -502,14 +570,14 @@ mod tests {
         let desc_str = format!("wsh(multi(2,{},{},{}))", key1, key2, key3);
         let desc = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 3);
 
-        // Should be a threshold with 3 key nodes
-        match node {
-            DescriptorNode::Threshold(t) => {
+        // Should be a threshold with 3 key trees
+        match tree {
+            DescriptorTree::Threshold(t) => {
                 assert_eq!(t.k(), 2);
                 assert_eq!(t.n(), 3);
 
@@ -527,12 +595,12 @@ mod tests {
                 assert!(extracted_serialized.contains(&key_serialized2));
                 assert!(extracted_serialized.contains(&key_serialized3));
             }
-            _ => panic!("Expected Threshold node for wsh(multi) descriptor"),
+            _ => panic!("Expected Threshold tree for wsh(multi) descriptor"),
         }
     }
 
     #[test]
-    fn test_to_node_sh_wsh_multi() {
+    fn test_to_tree_sh_wsh_multi() {
         // Test nested SH-WSH with a multisig
         let key1 = create_test_key(1);
         let key2 = create_test_key(2);
@@ -540,14 +608,14 @@ mod tests {
         let desc_str = format!("sh(wsh(multi(2,{},{})))", key1, key2);
         let desc = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 2);
 
-        // Should be a threshold with 2 key nodes
-        match node {
-            DescriptorNode::Threshold(t) => {
+        // Should be a threshold with 2 key trees
+        match tree {
+            DescriptorTree::Threshold(t) => {
                 assert_eq!(t.k(), 2);
                 assert_eq!(t.n(), 2);
 
@@ -562,25 +630,25 @@ mod tests {
                 assert!(extracted_serialized.contains(&key_serialized1));
                 assert!(extracted_serialized.contains(&key_serialized2));
             }
-            _ => panic!("Expected Threshold node for sh(wsh(multi)) descriptor"),
+            _ => panic!("Expected Threshold tree for sh(wsh(multi)) descriptor"),
         }
     }
 
     #[test]
-    fn test_to_node_tr() {
+    fn test_to_tree_tr() {
         // Test taproot descriptor with an internal key and no scripts
         let key = create_test_key(1);
         let desc_str = format!("tr({})", key);
         let desc = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 1);
 
-        // Should be a threshold node with just the internal key
-        match node {
-            DescriptorNode::Threshold(t) => {
+        // Should be a threshold tree with just the internal key
+        match tree {
+            DescriptorTree::Threshold(t) => {
                 assert_eq!(t.n(), 1); // Just the internal key, no scripts
 
                 // Compare serialized keys
@@ -588,12 +656,12 @@ mod tests {
                 let extracted_serialized = serialize_descriptor_pubkey(&keys[0]);
                 assert_eq!(extracted_serialized, key_serialized);
             }
-            _ => panic!("Expected Threshold node for tr descriptor"),
+            _ => panic!("Expected Threshold tree for tr descriptor"),
         }
     }
 
     #[test]
-    fn test_to_node_tr_with_scripts() {
+    fn test_to_tree_tr_with_scripts() {
         // Test taproot descriptor with scripts
         let key1 = create_test_key(1);
         let key2 = create_test_key(2);
@@ -603,14 +671,14 @@ mod tests {
         let desc_str = format!("tr({},pk({}))", key1, key2);
         let desc = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 2);
 
         // Should be a threshold with internal key and script key
-        match node {
-            DescriptorNode::Threshold(t) => {
+        match tree {
+            DescriptorTree::Threshold(t) => {
                 assert_eq!(t.n(), 2); // Internal key + 1 script
 
                 let key_serialized1 = serialize_descriptor_pubkey(&key1);
@@ -624,21 +692,21 @@ mod tests {
                 assert!(extracted_serialized.contains(&key_serialized1));
                 assert!(extracted_serialized.contains(&key_serialized2));
             }
-            _ => panic!("Expected Threshold node for tr descriptor with script"),
+            _ => panic!("Expected Threshold tree for tr descriptor with script"),
         }
 
         // tr with internal key and two script paths
         let desc_str = format!("tr({},{{pk({}),pk({})}})", key1, key2, key3);
         let desc = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 3);
 
         // Should be a threshold with internal key and two script keys
-        match node {
-            DescriptorNode::Threshold(t) => {
+        match tree {
+            DescriptorTree::Threshold(t) => {
                 assert_eq!(t.n(), 3); // Internal key + 2 scripts
 
                 let key_serialized1 = serialize_descriptor_pubkey(&key1);
@@ -654,12 +722,12 @@ mod tests {
                 assert!(extracted_serialized.contains(&key_serialized2));
                 assert!(extracted_serialized.contains(&key_serialized3));
             }
-            _ => panic!("Expected Threshold node for tr descriptor with multiple scripts"),
+            _ => panic!("Expected Threshold tree for tr descriptor with multiple scripts"),
         }
     }
 
     #[test]
-    fn test_to_node_with_miniscript_and() {
+    fn test_to_tree_with_miniscript_and() {
         // Test a descriptor with an AND operation in miniscript
         let key1 = create_test_key(1);
         let key2 = create_test_key(2);
@@ -668,14 +736,14 @@ mod tests {
         let desc_str = format!("wsh(and_v(v:pk({}),pk({})))", key1, key2);
         let desc = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 2);
 
         // Should be a threshold requiring all (k=n)
-        match node {
-            DescriptorNode::Threshold(t) => {
+        match tree {
+            DescriptorTree::Threshold(t) => {
                 assert_eq!(t.k(), t.n()); // AND requires all keys
 
                 let key_serialized1 = serialize_descriptor_pubkey(&key1);
@@ -689,12 +757,12 @@ mod tests {
                 assert!(extracted_serialized.contains(&key_serialized1));
                 assert!(extracted_serialized.contains(&key_serialized2));
             }
-            _ => panic!("Expected Threshold node for AND miniscript"),
+            _ => panic!("Expected Threshold tree for AND miniscript"),
         }
     }
 
     #[test]
-    fn test_to_node_with_miniscript_or() {
+    fn test_to_tree_with_miniscript_or() {
         // Test a descriptor with an OR operation in miniscript
         let key1 = create_test_key(1);
         let key2 = create_test_key(2);
@@ -703,14 +771,14 @@ mod tests {
         let desc_str = format!("wsh(or_d(pk({}),pk({})))", key1, key2);
         let desc = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 2);
 
         // Should be a 1-of-n threshold
-        match node {
-            DescriptorNode::Threshold(t) => {
+        match tree {
+            DescriptorTree::Threshold(t) => {
                 assert_eq!(t.k(), 1); // OR requires 1 of the keys
                 assert_eq!(t.n(), 2);
 
@@ -725,12 +793,12 @@ mod tests {
                 assert!(extracted_serialized.contains(&key_serialized1));
                 assert!(extracted_serialized.contains(&key_serialized2));
             }
-            _ => panic!("Expected Threshold node for OR miniscript"),
+            _ => panic!("Expected Threshold tree for OR miniscript"),
         }
     }
 
     #[test]
-    fn test_to_node_with_miniscript_thresh() {
+    fn test_to_tree_with_miniscript_thresh() {
         // Test a descriptor with a threshold operation in miniscript
         let key1 = create_test_key(1);
         let key2 = create_test_key(2);
@@ -740,14 +808,14 @@ mod tests {
         let desc_str = format!("wsh(thresh(2,pk({}),s:pk({}),s:pk({})))", key1, key2, key3);
         let desc = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 3);
 
         // Should be a 2-of-3 threshold
-        match node {
-            DescriptorNode::Threshold(t) => {
+        match tree {
+            DescriptorTree::Threshold(t) => {
                 assert_eq!(t.k(), 2);
                 assert_eq!(t.n(), 3);
 
@@ -764,12 +832,12 @@ mod tests {
                 assert!(extracted_serialized.contains(&key_serialized2));
                 assert!(extracted_serialized.contains(&key_serialized3));
             }
-            _ => panic!("Expected Threshold node for thresh miniscript"),
+            _ => panic!("Expected Threshold tree for thresh miniscript"),
         }
     }
 
     #[test]
-    fn test_to_node_with_miniscript_andor() {
+    fn test_to_tree_with_miniscript_andor() {
         // Test a descriptor with an AND_OR operation in miniscript
         let key1 = create_test_key(1);
         let key2 = create_test_key(2);
@@ -780,10 +848,10 @@ mod tests {
         let desc_str = format!("wsh(andor(pk({}),pk({}),pk({})))", key1, key2, key3);
         let desc = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
         // Extract keys and ensure all 3 keys are there
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 3);
 
         let key_serialized1 = serialize_descriptor_pubkey(&key1);
@@ -801,7 +869,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_node_with_timelock() {
+    fn test_to_tree_with_timelock() {
         // Test a descriptor with a timelock
         let key = create_test_key(1);
 
@@ -809,37 +877,37 @@ mod tests {
         let desc_str = format!("wsh(and_v(v:pk({}),after(100)))", key);
         let desc = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 1);
 
         // Should be a threshold with one real key and the timelock becomes keyless
-        match node {
-            DescriptorNode::Threshold(_) => {
+        match tree {
+            DescriptorTree::Threshold(_) => {
                 let key_serialized = serialize_descriptor_pubkey(&key);
                 let extracted_serialized = serialize_descriptor_pubkey(&keys[0]);
                 assert_eq!(extracted_serialized, key_serialized);
 
                 // Test prune_keyless behavior
-                let keyless = node.prune_keyless();
+                let keyless = tree.prune_keyless();
                 assert!(keyless.is_some());
 
                 // After removing keyless, should just have a single key
                 match keyless.unwrap() {
-                    DescriptorNode::Key(k) => {
+                    KeylessDescriptorTree::Key(k) => {
                         let k_serialized = serialize_descriptor_pubkey(&k);
                         assert_eq!(k_serialized, key_serialized);
                     }
                     _ => panic!("Expected single key after prune_keyless"),
                 }
             }
-            _ => panic!("Expected Threshold node for timelock descriptor"),
+            _ => panic!("Expected Threshold tree for timelock descriptor"),
         }
     }
 
     #[test]
-    fn test_to_node_with_hashlocks() {
+    fn test_to_tree_with_hashlocks() {
         // Test a descriptor with hash locks
         let key1 = create_test_key(1);
         let key2 = create_test_key(2);
@@ -851,10 +919,10 @@ mod tests {
         );
         let desc = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
         // Extract keys
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 2);
 
         let key_serialized1 = serialize_descriptor_pubkey(&key1);
@@ -869,7 +937,7 @@ mod tests {
         assert!(extracted_serialized.contains(&key_serialized2));
 
         // Test prune_keyless
-        let keyless = node.prune_keyless();
+        let keyless = tree.prune_keyless();
         assert!(keyless.is_some());
     }
 
@@ -887,10 +955,10 @@ mod tests {
         );
         let desc = Descriptor::<DescriptorPublicKey>::from_str(&desc_str).unwrap();
 
-        let node = desc.to_node();
+        let tree = desc.to_tree();
 
         // Extract keys
-        let keys = node.extract_keys();
+        let keys = tree.extract_keys();
         assert_eq!(keys.len(), 3);
 
         let key_serialized1 = serialize_descriptor_pubkey(&key1);
@@ -905,11 +973,6 @@ mod tests {
         assert!(extracted_serialized.contains(&key_serialized1));
         assert!(extracted_serialized.contains(&key_serialized2));
         assert!(extracted_serialized.contains(&key_serialized3));
-
-        // Test prune_keyless - should preserve all the key nodes
-        let keyless = node.prune_keyless().unwrap();
-        let keyless_keys = keyless.extract_keys();
-        assert_eq!(keyless_keys.len(), 3);
     }
 
     // Helper function to serialize a descriptor public key for comparison

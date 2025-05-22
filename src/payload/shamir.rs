@@ -89,7 +89,7 @@ pub struct Share {
 /// * `secret`: The secret data as a slice of bytes.
 /// * `k`: The threshold number of shares required to reconstruct the secret.
 /// * `x_coords`: A slice of `n` distinct non-zero `u8` x-coordinates to generate shares for.
-///              The length of `x_coords` determines `n`.
+///   The length of `x_coords` determines `n`.
 ///
 /// # Returns
 /// A `Result` containing a vector of `Share` structs, or an error string if inputs are invalid.
@@ -107,7 +107,7 @@ pub fn split_secret(secret: &[u8], k: usize, x_coords: &[u8]) -> Result<Vec<Shar
     if secret.is_empty() {
         return Err("Secret cannot be empty.".to_string());
     }
-    if x_coords.iter().any(|&x_val| x_val == 0) {
+    if x_coords.contains(&0) {
         return Err("x-coordinates cannot be zero.".to_string());
     }
 
@@ -155,7 +155,7 @@ pub fn split_secret(secret: &[u8], k: usize, x_coords: &[u8]) -> Result<Vec<Shar
 ///
 /// # Arguments
 /// * `shares`: A slice of `Share` structs. At least `k` shares must be provided.
-///           If more than `k` shares are provided, only the first `k` are used.
+///   If more than `k` shares are provided, only the first `k` are used.
 /// * `k`: The original threshold used when splitting the secret.
 ///
 /// # Returns

@@ -10,7 +10,7 @@
 //!
 //! Bitcoin wallet descriptors encode the spending conditions for Bitcoin outputs, including
 //! keys, scripts, and other requirements. While descriptors are powerful tools for representing
-//! wallet structures, securely backing them up presents a challenge - especially for
+//! wallet structures, securely backing them up presents a challenge, especially for
 //! multi-signature and complex script setups.
 //!
 //! This library implements a cryptographic system that allows any Bitcoin wallet descriptor to be
@@ -18,7 +18,7 @@
 //!
 //! - If your wallet requires 2-of-3 keys to spend, it will require exactly 2-of-3 keys to decrypt
 //! - If your wallet uses a complex miniscript policy like "Either 2 keys OR (a timelock AND another key)",
-//!   the encryption follows this same logical structure
+//!   the encryption follows this same logical structure, as if all timelocks and hashlocks are satisfied
 //!
 //! ## How It Works
 //!
@@ -26,7 +26,7 @@
 //!
 //! 1. **Security Mirroring**: The descriptor's spending policy is analyzed and transformed into an
 //!    equivalent encryption policy
-//! 2. **Recursive Secret Sharing**: Shamir's Secret Sharing is applied recursively to split
+//! 2. **Recursive Secret Sharing**: Shamir Secret Sharing is applied recursively to split
 //!    encryption keys following the script's threshold requirements
 //! 3. **Per-Key Encryption**: Each share is encrypted with the corresponding public key from
 //!    the descriptor, ensuring only key holders can access them
@@ -35,7 +35,7 @@
 //! 5. **Payload Extraction**: Sensitive data, including the master fingerprints, public keys and xpubs,
 //     hashes, and timelocks, are extracted from the descriptor and encrypted
 //! 6. **Template Extraction**: The descriptor template and derivation paths remain visible in plaintext,
-//!    allowing key holders to derive the necessary public keys and recover the full descriptor
+//!    allowing key holders to derive the necessary public keys to recover the full descriptor
 //!
 //! ## Usage
 //!
@@ -94,8 +94,8 @@
 //! - Template extraction is possible without exposing sensitive information
 //! - The encryption is deterministic, producing the same output given the same descriptor
 //!
-//! The security of the system relies on the security of ChaCha20-Poly1305 for encryption and
-//! Shamir's Secret Sharing for threshold access control.
+//! The security of the system relies on the security of ChaCha20(Poly1305) for encryption and
+//! Shamir Secret Sharing for threshold access control.
 //!
 
 // Coding conventions

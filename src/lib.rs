@@ -242,7 +242,7 @@ pub fn get_template(data: &[u8]) -> Result<Descriptor<DescriptorPublicKey>> {
     }
 
     let data = match data[0] {
-        V0 => &data[1..],
+        V0 | V1 => &data[1..],
         _ => return Err(anyhow!("Unsupported version: {}", data[0])),
     };
 
@@ -258,7 +258,7 @@ pub fn get_origin_derivation_paths(data: &[u8]) -> Result<Vec<DerivationPath>> {
     }
 
     let data = match data[0] {
-        V0 => &data[1..],
+        V0 | V1 => &data[1..],
         _ => return Err(anyhow!("Unsupported version: {}", data[0])),
     };
 
@@ -306,9 +306,13 @@ mod tests {
             let keys = desc.clone().to_tree().extract_keys();
             let ciphertext = encrypt(desc.clone()).unwrap();
             assert_eq!(desc, decrypt(&ciphertext, keys.clone()).unwrap());
+            assert!(get_template(&ciphertext).is_ok());
+            assert!(get_origin_derivation_paths(&ciphertext).is_ok());
 
             let ciphertext = encrypt_with_full_secrecy(desc.clone()).unwrap();
             assert_eq!(desc, decrypt(&ciphertext, keys).unwrap());
+            assert!(get_template(&ciphertext).is_ok());
+            assert!(get_origin_derivation_paths(&ciphertext).is_ok());
         }
     }
 
@@ -319,36 +323,39 @@ mod tests {
 
         // Modify the version byte to an invalid version
         let mut encrypted_data = encrypt(desc.clone()).unwrap();
-        encrypted_data[0] = 0xFF;
 
-        let template_result = get_template(&encrypted_data);
-        assert!(
-            template_result
-                .unwrap_err()
-                .to_string()
-                .contains("Unsupported version: 255")
-        );
+        for i in 2..0xFF {
+            encrypted_data[0] = i;
 
-        let paths_result = get_origin_derivation_paths(&encrypted_data);
-        assert!(
-            paths_result
-                .unwrap_err()
-                .to_string()
-                .contains("Unsupported version: 255")
-        );
+            let template_result = get_template(&encrypted_data);
+            assert!(
+                template_result
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&format!("Unsupported version: {}", i))
+            );
 
-        let key = DescriptorPublicKey::from_str(
-            "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
-        )
-        .unwrap();
+            let paths_result = get_origin_derivation_paths(&encrypted_data);
+            assert!(
+                paths_result
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&format!("Unsupported version: {}", i))
+            );
 
-        let decrypt_result = decrypt(&encrypted_data, vec![key]);
-        assert!(
-            decrypt_result
-                .unwrap_err()
-                .to_string()
-                .contains("Unsupported version: 255")
-        );
+            let key = DescriptorPublicKey::from_str(
+                "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+            )
+            .unwrap();
+
+            let decrypt_result = decrypt(&encrypted_data, vec![key]);
+            assert!(
+                decrypt_result
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&format!("Unsupported version: {}", i))
+            );
+        }
     }
 
     #[test]

@@ -3,38 +3,84 @@
 ## Overview
 A rust library and CLI tool that efficiently encrypts a Bitcoin wallet descriptor such that it can only be recovered by a set of keys that can spend the funds.
 
-## Features
+## Introduction
 
-`descriptor-encrypt` provides a robust mechanism for encrypting Bitcoin wallet descriptors with a security model that maps directly to the spending conditions of the descriptor itself. Here's what it does in detail:
+Bitcoin wallet descriptors encode the spending conditions for Bitcoin outputs, including keys, scripts, and other requirements. While descriptors are powerful tools for representing wallet structures, securely backing them up presents a challenge - especially for multi-signature and complex script setups.
 
-### Threshold-Based Security Model
-- **Threshold Authentication**: The descriptor's access control policy (e.g., m-of-n multisig) automatically determines the decryption threshold
-- **Policy Mirroring**: Encryption security policy directly mirrors the descriptor's spending policy - if a wallet requires 2-of-3 keys to spend, it will also require 2-of-3 keys to decrypt
+This library implements a cryptographic system that allows any Bitcoin wallet descriptor to be encrypted with a security model that directly mirrors the descriptor's spending conditions:
 
-### Cryptographic Implementation
-- **Deterministic Key Derivation**: Master encryption keys are derived deterministically from the descriptor's structure and content
-- **Shamir Secret Sharing**: Implements recursive Shamir's Secret Sharing to split the master encryption key according to the descriptor's threshold requirements
-- **Public Key-Based Access Control**: Each share is encrypted with the corresponding public key from the descriptor
-- **ChaCha20-Poly1305 Encryption**: Uses modern, efficient encryption for both the payload (ChaCha20) and the key shares (ChaCha20Poly1305)
+- If your wallet requires 2-of-3 keys to spend, it will require exactly 2-of-3 keys to decrypt
+- If your wallet uses a complex miniscript policy like "Either 2 keys OR (a timelock AND another key)", the encryption follows this same logical structure
 
-### Complex Descriptor Support
-- **Full Descriptor Coverage**: Supports all Bitcoin descriptor types including:
-  - Single-sig (wpkh, pkh)
-  - Multi-sig (sorted, unsorted)
-  - Complex scripts (Miniscript expressions)
-  - Taproot descriptors with internal keys and script paths
-- **Nested Threshold Handling**: Properly handles nested threshold conditions (e.g., an OR with AND conditions inside it)
-- **Time and Hash Lock Support**: Maintains time locks and hash locks in the template while encrypting the specific values
+## How It Works
 
-### Template and Path Extraction
-- **Origin Path Extraction**: Can extract derivation paths from encrypted descriptors without full decryption
-- **Template Generation**: Can reveal the structure of an encrypted descriptor (with dummy values) without revealing the actual keys
+The encryption mechanism works through several key innovations:
 
-### Compact Encoding
-- **Tag-Based Encoding**: Uses tag-based encoding to minimize the size of the descriptor template
-- **Variable-Length Encoding**: Uses LEB128 variable-length integers to minimize the size of the encrypted data
+1. **Security Mirroring**: The descriptor's spending policy is analyzed and transformed into an equivalent encryption policy
+2. **Recursive Secret Sharing**: Shamir's Secret Sharing is applied recursively to split encryption keys following the script's threshold requirements
+3. **Per-Key Encryption**: Each share is encrypted with the corresponding public key from the descriptor, ensuring only key holders can access them
+4. **Compact Encoding**: Tag-based and LEB128 variable-length encoding is used to minimize the size of the encrypted data
+5. **Payload Extraction**: Sensitive data, including the master fingerprints, public keys and xpubs, hashes, and timelocks, are extracted from the descriptor and encrypted
+6. **Template Extraction**: The descriptor template and derivation paths remain visible in plaintext, allowing key holders to derive the necessary public keys and recover the full descriptor
 
-This ensures that a descriptor can only be decrypted by the same keys needed to spend from it, creating a direct correspondence between fund access and descriptor recovery.
+## Usage
+
+```rust
+use std::str::FromStr;
+use descriptor_encrypt::{encrypt, decrypt, get_template, get_origin_derivation_paths};
+use miniscript::descriptor::{Descriptor, DescriptorPublicKey};
+
+// Create a descriptor - a 2-of-3 multisig in this example
+let desc_str = "wsh(multi(2,\
+    03a0434d9e47f3c86235477c7b1ae6ae5d3442d49b1943c2b752a68e2a47e247c7,\
+    036d2b085e9e382ed10b69fc311a03f8641ccfff21574de0927513a49d9a688a00,\
+    02e8445082a72f29b75ca48748a914df60622a609cacfce8ed0e35804560741d29\
+))";
+let descriptor = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
+
+// Encrypt the descriptor
+let encrypted_data = encrypt(descriptor.clone()).unwrap();
+
+// Encrypt the descriptor with full secrecy (best for privacy but slower when decrypting large descriptors)
+let encrypted_data_with_full_secrecy = encrypt(descriptor.clone()).unwrap();
+
+// Get a template descriptor with dummy keys, hashes, and timelocks
+let template = get_template(&encrypted_data).unwrap();
+
+// Extract only the derivation paths (useful for deriving xpubs)
+let paths = get_origin_derivation_paths(&encrypted_data).unwrap();
+
+// Later, decrypt with the keys (in this example, only the first two keys are provided,
+// which is sufficient for a 2-of-3 multisig)
+let pk0 = DescriptorPublicKey::from_str("03a0434d9e47f3c86235477c7b1ae6ae5d3442d49b1943c2b752a68e2a47e247c7").unwrap();
+let pk1 = DescriptorPublicKey::from_str("036d2b085e9e382ed10b69fc311a03f8641ccfff21574de0927513a49d9a688a00").unwrap();
+let first_two_keys = vec![pk0, pk1];
+
+// Recover the original descriptor
+let recovered_descriptor = decrypt(&encrypted_data, first_two_keys).unwrap();
+assert_eq!(descriptor.to_string(), recovered_descriptor.to_string());
+```
+
+## Supported Descriptor Types
+
+The library supports all standard Bitcoin descriptor types:
+
+- Single-signature (`pkh`, `wpkh`, `tr` with internal key)
+- Multi-signature (`sh(multi)`, `wsh(multi)`, `sh(wsh(multi))`, etc.)
+- Taproot (`tr` with script trees)
+- Full Miniscript expressions (all logical operations, timelocks, hashlocks, etc.)
+- Nested combinations of the above
+
+## Security Considerations
+
+This library ensures:
+
+- Only key holders can decrypt descriptors, following the descriptor's original threshold logic
+- Encrypted data reveals nothing about the keys or spending conditions without decryption
+- Template extraction is possible without exposing sensitive information
+- The encryption is deterministic, producing the same output given the same descriptor
+
+The security of the system relies on the security of ChaCha20-Poly1305 for encryption and Shamir's Secret Sharing for threshold access control.
 
 ## Installation
 To build the project, use the following command:

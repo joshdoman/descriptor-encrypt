@@ -37,13 +37,11 @@
 //! 6. **Template Extraction**: The descriptor template and derivation paths remain visible in plaintext,
 //!    allowing key holders to derive the necessary public keys and recover the full descriptor
 //!
-//! ## Examples
-//!
-//! ### Encrypting a Descriptor
+//! ## Usage
 //!
 //! ```rust
 //! use std::str::FromStr;
-//! use descriptor_encrypt::{encrypt, decrypt};
+//! use descriptor_encrypt::{encrypt, encrypt_with_full_secrecy, decrypt, get_template, get_origin_derivation_paths};
 //! use miniscript::descriptor::{Descriptor, DescriptorPublicKey};
 //!
 //! // Create a descriptor - a 2-of-3 multisig in this example
@@ -57,6 +55,15 @@
 //! // Encrypt the descriptor
 //! let encrypted_data = encrypt(descriptor.clone()).unwrap();
 //!
+//! // Encrypt the descriptor with full secrecy (best for privacy but slower when decrypting large descriptors)
+//! let encrypted_data_with_full_secrecy = encrypt(descriptor.clone()).unwrap();
+//!
+//! // Get a template descriptor with dummy keys, hashes, and timelocks
+//! let template = get_template(&encrypted_data).unwrap();
+//!
+//! // Extract only the derivation paths (useful for deriving xpubs)
+//! let paths = get_origin_derivation_paths(&encrypted_data).unwrap();
+//!
 //! // Later, decrypt with the keys (in this example, only the first two keys are provided,
 //! // which is sufficient for a 2-of-3 multisig)
 //! let pk0 = DescriptorPublicKey::from_str("03a0434d9e47f3c86235477c7b1ae6ae5d3442d49b1943c2b752a68e2a47e247c7").unwrap();
@@ -66,21 +73,6 @@
 //! // Recover the original descriptor
 //! let recovered_descriptor = decrypt(&encrypted_data, first_two_keys).unwrap();
 //! assert_eq!(descriptor.to_string(), recovered_descriptor.to_string());
-//! ```
-//!
-//! ### Getting Template and Derivation Paths
-//!
-//! ```rust,ignore
-//! use descriptor_encrypt::{encrypt, get_template, get_origin_derivation_paths};
-//! // (imports and setup as in previous example)
-//!
-//! let encrypted_data = encrypt(descriptor.clone()).unwrap();
-//!
-//! // Get a template descriptor with dummy keys (useful for analysis without revealing actual keys)
-//! let template = get_template(&encrypted_data).unwrap();
-//!
-//! // Extract only the derivation paths (useful for watch-only wallets)
-//! let paths = get_origin_derivation_paths(&encrypted_data).unwrap();
 //! ```
 //!
 //! ## Supported Descriptor Types
@@ -99,7 +91,7 @@
 //!
 //! - Only key holders can decrypt descriptors, following the descriptor's original threshold logic
 //! - Encrypted data reveals nothing about the keys or spending conditions without decryption
-//! - Structure template extraction is possible without exposing sensitive information
+//! - Template extraction is possible without exposing sensitive information
 //! - The encryption is deterministic, producing the same output given the same descriptor
 //!
 //! The security of the system relies on the security of ChaCha20-Poly1305 for encryption and

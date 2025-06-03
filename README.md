@@ -8,7 +8,7 @@ A rust library and CLI tool that efficiently encrypts a Bitcoin wallet descripto
 
 Bitcoin wallet descriptors encode the spending conditions for Bitcoin outputs, including keys, scripts, and other requirements. While descriptors are powerful tools for representing wallet structures, securely backing them up presents a challenge, especially for multi-signature and complex script setups.
 
-This library implements a cryptographic system that allows any Bitcoin wallet descriptor to be encrypted with a security model that directly mirrors the descriptor's spending conditions:
+This library encrypts any Bitcoin wallet descriptor in a way that directly mirrors the descriptor's spending conditions:
 
 - If your wallet requires 2-of-3 keys to spend, it will require exactly 2-of-3 keys to decrypt
 - If your wallet uses a complex miniscript policy like "Either 2 keys OR (a timelock AND another key)", the encryption follows this same logical structure, as if all timelocks and hashlocks are satisfied

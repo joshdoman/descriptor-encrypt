@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: CC0-1.0
 
 use anyhow::{Result, anyhow, ensure};
+use descriptor_tree::{KeylessDescriptorTree, ToDescriptorTree};
 use itertools::Itertools;
 use miniscript::{
     Threshold,
@@ -9,7 +10,6 @@ use miniscript::{
 use sha2::{Digest, Sha256};
 
 use super::cipher::{AuthenticatedCipher, KeyCipher, UnauthenticatedCipher};
-use super::descriptor_tree::{KeylessDescriptorTree, ToDescriptorTree};
 use super::shamir::{Share, reconstruct_secret, split_secret};
 
 type Data = Vec<u8>;

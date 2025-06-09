@@ -119,10 +119,9 @@ mod template;
 
 use anyhow::{Result, anyhow};
 use bitcoin::bip32::DerivationPath;
+use descriptor_tree::ToDescriptorTree;
 use miniscript::{Descriptor, DescriptorPublicKey};
 use sha2::{Digest, Sha256};
-
-use crate::payload::ToDescriptorTree;
 
 const V0: u8 = 0;
 const V1: u8 = 1;
@@ -190,7 +189,11 @@ pub fn decrypt(
 
     let (template, size) = template::decode(data)?;
 
-    let num_keys = template.clone().to_tree().extract_keys().len();
+    let num_keys = if let Some(pruned_tree) = template.clone().to_tree().prune_keyless() {
+        pruned_tree.extract_keys().len()
+    } else {
+        0
+    };
 
     if size + num_keys * 48 > data.len() {
         return Err(anyhow!("Missing bytes"));
@@ -275,7 +278,7 @@ pub fn get_origin_derivation_paths(data: &[u8]) -> Result<Vec<DerivationPath>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::payload::ToDescriptorTree;
+    use descriptor_tree::ToDescriptorTree;
     use miniscript::{Descriptor, DescriptorPublicKey};
     use std::str::FromStr;
 

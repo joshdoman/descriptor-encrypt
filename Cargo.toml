@@ -1,15 +1,31 @@
 [package]
 name = "descriptor-encrypt"
 version = "0.1.1"
+description = "Encrypt Bitcoin wallet descriptors such that only authorized spenders can decrypt"
+keywords = [ "crypto", "bitcoin", "descriptor", "miniscript", "encrypt" ]
+readme = "README.md"
+
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[workspace]
+members = [".", "crates/*"]
+
+[workspace.package]
 authors = ["Joshua Doman <joshsdoman@gmail.com>"]
 license = "CC0-1.0"
 homepage = "https://github.com/joshdoman/descriptor-encrypt"
 repository = "https://github.com/joshdoman/descriptor-encrypt"
-description = "Encrypt Bitcoin wallet descriptors such that only authorized spenders can decrypt"
-keywords = [ "crypto", "bitcoin", "descriptor", "miniscript", "encrypt" ]
-readme = "README.md"
 edition = "2024"
 rust-version = "1.85.0"
+
+[workspace.dependencies]
+bitcoin = "0.32.5"
+miniscript = "12.3.2"
 
 [features]
 default = ["std"]
@@ -19,10 +35,11 @@ trace = []
 
 [dependencies]
 anyhow = "1.0.98"
-bitcoin = "0.32.5"
+bitcoin.workspace = true
 chacha20 = "0.9.1"
 chacha20poly1305 = "0.10.1"
-miniscript = "12.3.2"
+descriptor-tree = { version = "0.1.0", path = "crates/descriptor-tree" }
+miniscript.workspace = true
 sha2 = "0.10.9"
 clap = { version = "4.4", features = ["derive"] }
 itertools = "0.14.0"

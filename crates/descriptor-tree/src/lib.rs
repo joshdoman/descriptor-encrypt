@@ -29,6 +29,24 @@ pub enum KeylessDescriptorTree<Pk: MiniscriptKey> {
     Threshold(KeylessDescriptorTreeThreshold<Pk>),
 }
 
+/// A trait to construct a descriptor tree
+pub trait ToDescriptorTree<Pk: MiniscriptKey> {
+    /// Returns a descriptor tree
+    fn to_tree(&self) -> DescriptorTree<Pk>;
+}
+
+impl<Pk: MiniscriptKey> KeylessDescriptorTree<Pk> {
+    /// Returns a list of keys in the pruned descriptor
+    pub fn extract_keys(&self) -> Vec<Pk> {
+        match self {
+            KeylessDescriptorTree::Key(pk) => vec![pk.clone()],
+            KeylessDescriptorTree::Threshold(thresh) => {
+                thresh.iter().flat_map(|tree| tree.extract_keys()).collect()
+            }
+        }
+    }
+}
+
 impl<Pk: MiniscriptKey> DescriptorTree<Pk> {
     /// Returns a list of keys in the descriptor
     pub fn extract_keys(&self) -> Vec<Pk> {
@@ -41,15 +59,15 @@ impl<Pk: MiniscriptKey> DescriptorTree<Pk> {
         }
     }
 
-    /// Prune keyless trees assuming they evaluate to `true`.
-    /// Sets new_k = max(old_k - num(keyless), 0) in each threshold.
+    /// Prune keyless leaves assuming satisifiable conditions are satisfied.
+    /// Sets new_k = max(old_k - num(satisfiable keyless leaves), 0) in each threshold.
     pub fn prune_keyless(&self) -> Option<KeylessDescriptorTree<Pk>> {
         let (_, pruned_tree) = self.prune_keyless_with_satisfiability();
         pruned_tree
     }
 
-    // Returns pruned tree and whether its satisfiable
-    pub fn prune_keyless_with_satisfiability(&self) -> (bool, Option<KeylessDescriptorTree<Pk>>) {
+    /// Returns pruned tree and whether its satisfiable
+    fn prune_keyless_with_satisfiability(&self) -> (bool, Option<KeylessDescriptorTree<Pk>>) {
         match self {
             DescriptorTree::Keyless(satisfiable) => (*satisfiable, None),
             DescriptorTree::Key(pk) => (true, Some(KeylessDescriptorTree::Key(pk.clone()))),
@@ -127,12 +145,6 @@ impl<Pk: MiniscriptKey> DescriptorTree<Pk> {
 
         DescriptorTree::Threshold(thresh)
     }
-}
-
-/// A trait to construct a descriptor tree
-pub trait ToDescriptorTree<Pk: MiniscriptKey> {
-    /// Returns a descriptor tree
-    fn to_tree(&self) -> DescriptorTree<Pk>;
 }
 
 impl<Pk: MiniscriptKey> ToDescriptorTree<Pk> for Descriptor<Pk> {

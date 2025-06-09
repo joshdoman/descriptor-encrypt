@@ -12,7 +12,7 @@ use std::str::FromStr;
 #[derive(Parser)]
 #[clap(name = "descriptor-encrypt")]
 #[clap(author = "Joshua Doman <joshsdoman@gmail.com>")]
-#[clap(version = "0.1.0")]
+#[clap(version = "0.1.2")]
 #[clap(about = "CLI tool to encrypt and decrypt Bitcoin descriptors.", long_about = None)]
 struct Cli {
     #[clap(subcommand)]

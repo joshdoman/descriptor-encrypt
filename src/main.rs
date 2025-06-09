@@ -3,10 +3,11 @@
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
+use descriptor_encrypt::{
+    bitcoin::{bip32::DerivationPath, secp256k1::Secp256k1},
+    miniscript::descriptor::{Descriptor, DescriptorPublicKey, DescriptorSecretKey},
+};
 use std::str::FromStr;
-
-use descriptor_encrypt::bitcoin::bip32::DerivationPath;
-use descriptor_encrypt::miniscript::{Descriptor, DescriptorPublicKey};
 
 #[derive(Parser)]
 #[clap(name = "descriptor-encrypt")]
@@ -73,7 +74,8 @@ fn main() -> Result<()> {
 }
 
 fn handle_encrypt(args: EncryptArgs) -> Result<()> {
-    let desc = Descriptor::<DescriptorPublicKey>::from_str(&args.descriptor)
+    let secp = Secp256k1::new();
+    let (desc, _) = Descriptor::<DescriptorPublicKey>::parse_descriptor(&secp, &args.descriptor)
         .context("Failed to parse descriptor string")?;
 
     let encrypted_data = if args.with_full_secrecy {
@@ -94,8 +96,14 @@ fn handle_decrypt(args: DecryptArgs) -> Result<()> {
 
     let mut pks = Vec::new();
     for pk_str in args.pks {
-        let pk = DescriptorPublicKey::from_str(&pk_str)
-            .with_context(|| format!("Failed to parse public key string: {}", pk_str))?;
+        let pk = if let Ok(key) = DescriptorSecretKey::from_str(&pk_str) {
+            let secp = Secp256k1::new();
+            key.to_public(&secp)
+                .with_context(|| format!("Failed to convert string to public key: {}", pk_str))?
+        } else {
+            DescriptorPublicKey::from_str(&pk_str)
+                .with_context(|| format!("Failed to parse public key string: {}", pk_str))?
+        };
         pks.push(pk);
     }
 

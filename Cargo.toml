@@ -1,6 +1,6 @@
 [package]
 name = "descriptor-encrypt"
-version = "0.1.1"
+version = "0.1.2"
 description = "Encrypt Bitcoin wallet descriptors such that only authorized spenders can decrypt"
 keywords = [ "crypto", "bitcoin", "descriptor", "miniscript", "encrypt" ]
 readme = "README.md"

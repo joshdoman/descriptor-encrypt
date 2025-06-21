@@ -123,13 +123,20 @@ use descriptor_tree::ToDescriptorTree;
 use miniscript::{Descriptor, DescriptorPublicKey};
 use sha2::{Digest, Sha256};
 
-const V0: u8 = 0;
-const V1: u8 = 1;
+/// Options for encryption that can be passed to encrypt_with_options
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EncryptOption {
+    /// Full secrecy: no information is gained about key inclusion unless
+    /// the descriptor can be decrypted.
+    ///
+    /// Represented by the first bit in the version byte.
+    FullSecrecy = 1,
+}
 
 /// Encrypts a descriptor such that it can only be recovered by a set of
 /// keys with access to the funds.
 pub fn encrypt(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
-    encrypt_with_version(V0, desc)
+    encrypt_with_options(desc, vec![])
 }
 
 /// Identical to `encrypt` except it provides full secrecy during encryption. as no
@@ -140,10 +147,16 @@ pub fn encrypt(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
 /// - Slower to decrypt: must try all possible combinations of keys. This is O((N+1)^K),
 ///   where N is the number of keys and K is the number of shares.
 pub fn encrypt_with_full_secrecy(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
-    encrypt_with_version(V1, desc)
+    encrypt_with_options(desc, vec![EncryptOption::FullSecrecy])
 }
 
-fn encrypt_with_version(version: u8, desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
+/// Encrypts a descriptor with the specified options.
+pub fn encrypt_with_options(
+    desc: Descriptor<DescriptorPublicKey>,
+    options: Vec<EncryptOption>,
+) -> Result<Vec<u8>> {
+    let version_byte = options.iter().fold(0u8, |acc, &option| acc | option as u8);
+
     let (template, payload) = template::encode(desc.clone());
 
     // Deterministically derive encryption key
@@ -154,21 +167,38 @@ fn encrypt_with_version(version: u8, desc: Descriptor<DescriptorPublicKey>) -> R
 
     // Encrypt payload and shard encryption key into encrypted shares (1 per key)
     let nonce = [0u8; 12];
-    let (encrypted_shares, encrypted_payload) = match version {
-        V0 => {
+    let (encrypted_shares, encrypted_payload) =
+        if version_byte & EncryptOption::FullSecrecy as u8 != 0 {
+            payload::encrypt_with_full_secrecy(desc, encryption_key.into(), nonce, payload)?
+        } else {
             payload::encrypt_with_authenticated_shards(desc, encryption_key.into(), nonce, payload)?
-        }
-        V1 => payload::encrypt_with_full_secrecy(desc, encryption_key.into(), nonce, payload)?,
-        _ => return Err(anyhow!("Unsupported version: {}", version)),
-    };
+        };
 
     Ok([
-        vec![version],
+        vec![version_byte],
         template,
         encrypted_shares.concat(),
         encrypted_payload,
     ]
     .concat())
+}
+
+fn version_byte_to_options(version: u8) -> Result<Vec<EncryptOption>> {
+    let mut options = Vec::new();
+    let mut remaining_bits = version;
+
+    for option in [EncryptOption::FullSecrecy] {
+        if version & option as u8 != 0 {
+            options.push(option);
+            remaining_bits ^= option as u8;
+        }
+    }
+
+    if remaining_bits != 0 {
+        return Err(anyhow!("Unsupported version: {:#b}", version));
+    }
+
+    Ok(options)
 }
 
 /// Decrypts an encrypted descriptor using a set of public keys with access to the funds
@@ -180,11 +210,12 @@ pub fn decrypt(
         return Err(anyhow!("Empty data"));
     }
 
-    let version = data[0];
-    let (data, share_size) = match version {
-        V0 => (&data[1..], 48_usize),
-        V1 => (&data[1..], 32_usize),
-        _ => return Err(anyhow!("Unsupported version: {}", version)),
+    let options = version_byte_to_options(data[0])?;
+    let data = &data[1..];
+    let share_size = if options.contains(&EncryptOption::FullSecrecy) {
+        32_usize
+    } else {
+        48_usize
     };
 
     let (template, size) = template::decode(data)?;
@@ -207,22 +238,22 @@ pub fn decrypt(
     let encrypted_payload = &data[size + num_keys * share_size..];
 
     let nonce = [0u8; 12];
-    let payload = match version {
-        V0 => payload::decrypt_with_authenticated_shards(
+    let payload = if options.contains(&EncryptOption::FullSecrecy) {
+        payload::decrypt_with_full_secrecy(
             template.clone(),
             encrypted_shares,
             pks,
             nonce,
             encrypted_payload.to_vec(),
-        )?,
-        V1 => payload::decrypt_with_full_secrecy(
+        )?
+    } else {
+        payload::decrypt_with_authenticated_shards(
             template.clone(),
             encrypted_shares,
             pks,
             nonce,
             encrypted_payload.to_vec(),
-        )?,
-        _ => unreachable!("unsupported version"),
+        )?
     };
 
     let desc = template::decode_with_payload(data, &payload)?;
@@ -236,12 +267,9 @@ pub fn get_template(data: &[u8]) -> Result<Descriptor<DescriptorPublicKey>> {
         return Err(anyhow!("Empty data"));
     }
 
-    let data = match data[0] {
-        V0 | V1 => &data[1..],
-        _ => return Err(anyhow!("Unsupported version: {}", data[0])),
-    };
+    version_byte_to_options(data[0])?;
 
-    let (template, _) = template::decode(data)?;
+    let (template, _) = template::decode(&data[1..])?;
 
     Ok(template)
 }
@@ -252,12 +280,9 @@ pub fn get_origin_derivation_paths(data: &[u8]) -> Result<Vec<DerivationPath>> {
         return Err(anyhow!("Empty data"));
     }
 
-    let data = match data[0] {
-        V0 | V1 => &data[1..],
-        _ => return Err(anyhow!("Unsupported version: {}", data[0])),
-    };
+    version_byte_to_options(data[0])?;
 
-    let (template, _) = template::decode(data)?;
+    let (template, _) = template::decode(&data[1..])?;
 
     let mut paths = Vec::new();
     for key in template.clone().to_tree().extract_keys() {
@@ -323,19 +348,15 @@ mod tests {
             encrypted_data[0] = i;
 
             let template_result = get_template(&encrypted_data);
-            assert!(
-                template_result
-                    .unwrap_err()
-                    .to_string()
-                    .contains(&format!("Unsupported version: {}", i))
+            assert_eq!(
+                template_result.unwrap_err().to_string(),
+                format!("Unsupported version: {:#b}", i)
             );
 
             let paths_result = get_origin_derivation_paths(&encrypted_data);
-            assert!(
-                paths_result
-                    .unwrap_err()
-                    .to_string()
-                    .contains(&format!("Unsupported version: {}", i))
+            assert_eq!(
+                paths_result.unwrap_err().to_string(),
+                format!("Unsupported version: {:#b}", i)
             );
 
             let key = DescriptorPublicKey::from_str(
@@ -344,11 +365,9 @@ mod tests {
             .unwrap();
 
             let decrypt_result = decrypt(&encrypted_data, vec![key]);
-            assert!(
-                decrypt_result
-                    .unwrap_err()
-                    .to_string()
-                    .contains(&format!("Unsupported version: {}", i))
+            assert_eq!(
+                decrypt_result.unwrap_err().to_string(),
+                format!("Unsupported version: {:#b}", i)
             );
         }
     }

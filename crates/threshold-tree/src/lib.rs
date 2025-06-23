@@ -5,7 +5,7 @@ use miniscript::Threshold;
 use std::fmt;
 
 /// A tree can a leaf, or a threshold of trees
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ThresholdTree<T: Clone> {
     /// A leaf
     Leaf(T),
@@ -74,10 +74,11 @@ impl<T: Clone> ThresholdTree<T> {
                     .iter()
                     .map(|node| node.num_paths())
                     .combinations(threshold.k())
-                    .map(|combo| combo
-                        .into_iter()
-                        .fold(1usize, |acc, num| acc.saturating_mul(num))
-                    )
+                    .map(|combo| {
+                        combo
+                            .into_iter()
+                            .fold(1usize, |acc, num| acc.saturating_mul(num))
+                    })
                     .collect();
 
                 let path_count = subpath_counts
@@ -115,19 +116,17 @@ impl<T: Clone> ThresholdTreeWithPaths<T> {
         }
     }
 
-    /// Get a specific path by index
-    pub fn get_path(&self, i: usize) -> Option<Vec<T>> {
+    /// Get a specific path by index (a pruned satisfying tree)
+    pub fn get_path(&self, i: usize) -> Option<ThresholdTree<T>> {
         if i >= self.num_paths() {
             return None;
         }
-        let mut path = Vec::new();
-        self.extend_path(i, &mut path);
-        Some(path)
+        Some(self.generate_path(i))
     }
 
-    fn extend_path(&self, mut i: usize, path: &mut Vec<T>) {
+    fn generate_path(&self, mut i: usize) -> ThresholdTree<T> {
         match self {
-            ThresholdTreeWithPaths::Leaf(value) => path.push(value.clone()),
+            ThresholdTreeWithPaths::Leaf(value) => ThresholdTree::Leaf(value.clone()),
             ThresholdTreeWithPaths::Threshold(t, _, subpath_counts) => {
                 let mut combo_index = 0;
                 for &subpath_count in subpath_counts {
@@ -139,13 +138,22 @@ impl<T: Clone> ThresholdTreeWithPaths<T> {
                 }
 
                 let combo = combination_indices(t.n(), t.k(), combo_index);
+                let mut nodes = Vec::new();
 
                 for &idx in &combo {
                     let node = &t.data()[idx];
+                    let pruned_node = node.generate_path(i % node.num_paths());
 
-                    node.extend_path(i % node.num_paths(), path);
-                    i /= node.num_paths();
+                    if combo.len() == 1 {
+                        return pruned_node;
+                    } else {
+                        nodes.push(pruned_node);
+                        i /= node.num_paths();
+                    }
                 }
+
+                let threshold = Threshold::new(t.k(), nodes).unwrap();
+                ThresholdTree::Threshold(threshold)
             }
         }
     }
@@ -162,14 +170,14 @@ impl<T: Clone> ThresholdPaths<T> {
         self.tree.num_paths()
     }
 
-    /// Get a specific path by index
-    pub fn get_path(&self, i: usize) -> Option<Vec<T>> {
+    /// Get a specific path by index (a pruned satisfying tree)
+    pub fn get_path(&self, i: usize) -> Option<ThresholdTree<T>> {
         self.tree.get_path(i)
     }
 }
 
 impl<T: Clone> Iterator for ThresholdPaths<T> {
-    type Item = Vec<T>;
+    type Item = ThresholdTree<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_index >= self.num_paths() {
@@ -241,7 +249,6 @@ fn binomial(n: usize, k: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
 
     // Helper to create leaf nodes quickly
     fn leaf<T: Clone>(value: T) -> ThresholdTree<T> {
@@ -260,7 +267,7 @@ mod tests {
         let paths: Vec<_> = tree.paths().unwrap().collect();
 
         assert_eq!(paths.len(), 1);
-        assert_eq!(paths[0], vec![42]);
+        assert_eq!(paths[0], leaf(42));
     }
 
     #[test]
@@ -270,8 +277,8 @@ mod tests {
         let paths: Vec<_> = tree.paths().unwrap().collect();
 
         assert_eq!(paths.len(), 2);
-        assert!(paths.contains(&vec!["a"]));
-        assert!(paths.contains(&vec!["b"]));
+        assert!(paths.contains(&leaf("a")));
+        assert!(paths.contains(&leaf("b")));
     }
 
     #[test]
@@ -281,7 +288,7 @@ mod tests {
         let paths: Vec<_> = tree.paths().unwrap().collect();
 
         assert_eq!(paths.len(), 1);
-        assert_eq!(paths[0], vec!["a", "b"]);
+        assert!(paths.contains(&threshold(2, vec![leaf("a"), leaf("b")])));
     }
 
     #[test]
@@ -291,10 +298,9 @@ mod tests {
         let paths: Vec<_> = tree.paths().unwrap().collect();
 
         assert_eq!(paths.len(), 3);
-        let path_set: HashSet<Vec<&str>> = paths.into_iter().collect();
-        assert!(path_set.contains(&vec!["a", "b"]));
-        assert!(path_set.contains(&vec!["a", "c"]));
-        assert!(path_set.contains(&vec!["b", "c"]));
+        assert!(paths.contains(&threshold(2, vec![leaf("a"), leaf("b")])));
+        assert!(paths.contains(&threshold(2, vec![leaf("a"), leaf("c")])));
+        assert!(paths.contains(&threshold(2, vec![leaf("b"), leaf("c")])));
     }
 
     #[test]
@@ -306,12 +312,11 @@ mod tests {
         let paths: Vec<_> = tree.paths().unwrap().collect();
 
         assert_eq!(paths.len(), 5);
-        let path_set: HashSet<Vec<&str>> = paths.into_iter().collect();
-        assert!(path_set.contains(&vec!["a", "b"]));
-        assert!(path_set.contains(&vec!["a", "c"]));
-        assert!(path_set.contains(&vec!["a", "d"]));
-        assert!(path_set.contains(&vec!["b", "c"]));
-        assert!(path_set.contains(&vec!["b", "d"]));
+        assert!(paths.contains(&threshold(2, vec![leaf("a"), leaf("b")])));
+        assert!(paths.contains(&threshold(2, vec![leaf("a"), leaf("c")])));
+        assert!(paths.contains(&threshold(2, vec![leaf("a"), leaf("d")])));
+        assert!(paths.contains(&threshold(2, vec![leaf("b"), leaf("c")])));
+        assert!(paths.contains(&threshold(2, vec![leaf("b"), leaf("d")])));
     }
 
     #[test]
@@ -328,7 +333,10 @@ mod tests {
 
         // Check path retrieval
         let path23 = tree.paths().unwrap().get_path(23).unwrap();
-        assert_eq!(path23, vec![2, 3, 5]);
+        assert_eq!(
+            path23,
+            threshold(2, vec![leaf(2), threshold(2, vec![leaf(3), leaf(5)])])
+        );
     }
 
     #[test]

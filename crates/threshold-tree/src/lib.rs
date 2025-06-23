@@ -4,7 +4,7 @@ use itertools::Itertools;
 use miniscript::Threshold;
 use std::fmt;
 
-/// A tree can a leaf, or a threshold of trees
+/// A tree can be a leaf, or a threshold of trees
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ThresholdTree<T: Clone> {
     /// A leaf
@@ -100,7 +100,7 @@ impl<T: Clone> ThresholdTree<T> {
 }
 
 impl<T: Clone> ThresholdTreeWithPaths<T> {
-    /// Get the leaves in the tree
+    /// Get the leaves in the tree in left-to-right order
     pub fn leaves(&self) -> Vec<T> {
         match self {
             Self::Leaf(value) => vec![value.clone()],
@@ -124,6 +124,7 @@ impl<T: Clone> ThresholdTreeWithPaths<T> {
         Some(self.generate_path(i))
     }
 
+    /// Private helper function for `get_path`
     fn generate_path(&self, mut i: usize) -> ThresholdTree<T> {
         match self {
             ThresholdTreeWithPaths::Leaf(value) => ThresholdTree::Leaf(value.clone()),

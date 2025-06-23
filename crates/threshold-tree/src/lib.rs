@@ -74,10 +74,15 @@ impl<T: Clone> ThresholdTree<T> {
                     .iter()
                     .map(|node| node.num_paths())
                     .combinations(threshold.k())
-                    .map(|combo| combo.into_iter().product::<usize>())
+                    .map(|combo| combo
+                        .into_iter()
+                        .fold(1usize, |acc, num| acc.saturating_mul(num))
+                    )
                     .collect();
 
-                let path_count = subpath_counts.clone().into_iter().sum();
+                let path_count = subpath_counts
+                    .iter()
+                    .fold(0usize, |acc, &count| acc.saturating_add(count));
 
                 if path_count > MAX_PATHS {
                     return Err(ThresholdPathsError::ExcessivePaths);

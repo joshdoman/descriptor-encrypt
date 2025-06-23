@@ -13,13 +13,37 @@ pub enum ThresholdTree<T: Clone> {
     Threshold(Threshold<ThresholdTree<T>, 0>),
 }
 
-/// Private enum that extends ThresholdTree with cached path counts
+/// A tree that includes the index of each node in the original parent
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IndexedThresholdTree<T: Clone> {
+    /// An indexed leaf
+    Leaf {
+        /// The leaf value
+        value: T,
+        /// The index of the leaf in the original parent
+        index: usize,
+    },
+    /// A threshold of trees
+    Threshold {
+        /// A threshold of indexed threshold trees
+        thresh: Threshold<IndexedThresholdTree<T>, 0>,
+        /// The index of the threshold in the original parent
+        index: usize,
+    },
+}
+
+/// Private enum that extends IndexedThresholdTree with cached path counts
 #[derive(Clone, Debug)]
-enum ThresholdTreeWithPaths<T: Clone> {
+enum IndexedThresholdTreeWithPaths<T: Clone> {
     /// A leaf (exactly 1 path)
-    Leaf(T),
-    /// A threshold of trees with cached path counts
-    Threshold(Threshold<ThresholdTreeWithPaths<T>, 0>, usize, Vec<usize>),
+    Leaf(T, usize),
+    /// An indexed threshold tree with cached path counts
+    Threshold(
+        Threshold<IndexedThresholdTreeWithPaths<T>, 0>,
+        usize,
+        usize,
+        Vec<usize>,
+    ),
 }
 
 /// The maximum number of paths allowed
@@ -36,17 +60,72 @@ pub enum ThresholdPathsError {
 #[derive(Clone, Debug)]
 pub struct ThresholdPaths<T: Clone> {
     /// A reference to a threshold tree with cached path counts
-    tree: ThresholdTreeWithPaths<T>,
+    tree: IndexedThresholdTreeWithPaths<T>,
     /// The current path index
     current_index: usize,
 }
 
 impl<T: Clone> ThresholdTree<T> {
-    /// Get the leaves in the tree
+    /// Get the leaves in the tree in left-to-right order
     pub fn leaves(&self) -> Vec<T> {
         match self {
             Self::Leaf(value) => vec![value.clone()],
             Self::Threshold(thresh) => thresh.iter().flat_map(|tree| tree.leaves()).collect(),
+        }
+    }
+
+    /// Get the indexed tree
+    pub fn indexed(&self) -> IndexedThresholdTree<T> {
+        self.to_indexed(0)
+    }
+
+    // Helper function for getting the indexed tree
+    fn to_indexed(&self, index: usize) -> IndexedThresholdTree<T> {
+        match self {
+            Self::Leaf(value) => IndexedThresholdTree::Leaf {
+                value: value.clone(),
+                index,
+            },
+            Self::Threshold(t) => {
+                let thresh = Threshold::from_iter(
+                    t.k(),
+                    t.iter().enumerate().map(|(i, node)| node.to_indexed(i)),
+                )
+                .unwrap();
+
+                IndexedThresholdTree::Threshold { thresh, index }
+            }
+        }
+    }
+
+    /// Get an iterator over all paths through the tree
+    pub fn paths(&self) -> Result<ThresholdPaths<T>, ThresholdPathsError> {
+        self.indexed().paths()
+    }
+}
+
+impl<T: Clone> IndexedThresholdTree<T> {
+    /// Get the leaves in the tree in left-to-right order
+    pub fn leaves(&self) -> Vec<T> {
+        match self {
+            Self::Leaf { value, .. } => vec![value.clone()],
+            Self::Threshold { thresh, .. } => {
+                thresh.iter().flat_map(|tree| tree.leaves()).collect()
+            }
+        }
+    }
+
+    /// Get the unindexed tree
+    pub fn unindexed(&self) -> ThresholdTree<T> {
+        match self {
+            Self::Leaf { value, .. } => ThresholdTree::Leaf(value.clone()),
+            Self::Threshold { thresh, .. } => {
+                let unindexed_thresh =
+                    Threshold::from_iter(thresh.k(), thresh.iter().map(|node| node.unindexed()))
+                        .unwrap();
+
+                ThresholdTree::Threshold(unindexed_thresh)
+            }
         }
     }
 
@@ -59,10 +138,12 @@ impl<T: Clone> ThresholdTree<T> {
     }
 
     /// Convert to a tree with cached path counts
-    fn to_tree_with_paths(&self) -> Result<ThresholdTreeWithPaths<T>, ThresholdPathsError> {
+    fn to_tree_with_paths(&self) -> Result<IndexedThresholdTreeWithPaths<T>, ThresholdPathsError> {
         match self {
-            ThresholdTree::Leaf(value) => Ok(ThresholdTreeWithPaths::Leaf(value.clone())),
-            ThresholdTree::Threshold(t) => {
+            Self::Leaf { value, index } => {
+                Ok(IndexedThresholdTreeWithPaths::Leaf(value.clone(), *index))
+            }
+            Self::Threshold { thresh: t, index } => {
                 if binomial(t.n(), t.k()) > MAX_PATHS {
                     return Err(ThresholdPathsError::ExcessivePaths);
                 }
@@ -89,8 +170,9 @@ impl<T: Clone> ThresholdTree<T> {
                     return Err(ThresholdPathsError::ExcessivePaths);
                 }
 
-                Ok(ThresholdTreeWithPaths::Threshold(
+                Ok(IndexedThresholdTreeWithPaths::Threshold(
                     threshold,
+                    *index,
                     path_count,
                     subpath_counts,
                 ))
@@ -99,11 +181,11 @@ impl<T: Clone> ThresholdTree<T> {
     }
 }
 
-impl<T: Clone> ThresholdTreeWithPaths<T> {
+impl<T: Clone> IndexedThresholdTreeWithPaths<T> {
     /// Get the leaves in the tree in left-to-right order
     pub fn leaves(&self) -> Vec<T> {
         match self {
-            Self::Leaf(value) => vec![value.clone()],
+            Self::Leaf(value, ..) => vec![value.clone()],
             Self::Threshold(thresh, ..) => thresh.iter().flat_map(|tree| tree.leaves()).collect(),
         }
     }
@@ -111,13 +193,13 @@ impl<T: Clone> ThresholdTreeWithPaths<T> {
     /// Get the cached path count
     fn num_paths(&self) -> usize {
         match self {
-            ThresholdTreeWithPaths::Leaf(_) => 1,
-            ThresholdTreeWithPaths::Threshold(_, count, _) => *count,
+            IndexedThresholdTreeWithPaths::Leaf(..) => 1,
+            IndexedThresholdTreeWithPaths::Threshold(_, _, count, _) => *count,
         }
     }
 
     /// Get a specific path by index (a pruned satisfying tree)
-    pub fn get_path(&self, i: usize) -> Option<ThresholdTree<T>> {
+    pub fn get_path(&self, i: usize) -> Option<IndexedThresholdTree<T>> {
         if i >= self.num_paths() {
             return None;
         }
@@ -125,10 +207,13 @@ impl<T: Clone> ThresholdTreeWithPaths<T> {
     }
 
     /// Private helper function for `get_path`
-    fn generate_path(&self, mut i: usize) -> ThresholdTree<T> {
+    fn generate_path(&self, mut i: usize) -> IndexedThresholdTree<T> {
         match self {
-            ThresholdTreeWithPaths::Leaf(value) => ThresholdTree::Leaf(value.clone()),
-            ThresholdTreeWithPaths::Threshold(t, _, subpath_counts) => {
+            IndexedThresholdTreeWithPaths::Leaf(value, index) => IndexedThresholdTree::Leaf {
+                value: value.clone(),
+                index: *index,
+            },
+            IndexedThresholdTreeWithPaths::Threshold(t, index, _, subpath_counts) => {
                 let mut combo_index = 0;
                 for &subpath_count in subpath_counts {
                     if i < subpath_count {
@@ -145,16 +230,15 @@ impl<T: Clone> ThresholdTreeWithPaths<T> {
                     let node = &t.data()[idx];
                     let pruned_node = node.generate_path(i % node.num_paths());
 
-                    if combo.len() == 1 {
-                        return pruned_node;
-                    } else {
-                        nodes.push(pruned_node);
-                        i /= node.num_paths();
-                    }
+                    nodes.push(pruned_node);
+                    i /= node.num_paths();
                 }
 
-                let threshold = Threshold::new(t.k(), nodes).unwrap();
-                ThresholdTree::Threshold(threshold)
+                let thresh = Threshold::new(t.k(), nodes).unwrap();
+                IndexedThresholdTree::Threshold {
+                    thresh,
+                    index: *index,
+                }
             }
         }
     }
@@ -172,13 +256,18 @@ impl<T: Clone> ThresholdPaths<T> {
     }
 
     /// Get a specific path by index (a pruned satisfying tree)
-    pub fn get_path(&self, i: usize) -> Option<ThresholdTree<T>> {
+    pub fn get_path(&self, i: usize) -> Option<IndexedThresholdTree<T>> {
         self.tree.get_path(i)
+    }
+
+    /// Convenience method to check if no paths exist
+    pub fn is_empty(&self) -> bool {
+        self.num_paths() == 0
     }
 }
 
 impl<T: Clone> Iterator for ThresholdPaths<T> {
-    type Item = ThresholdTree<T>;
+    type Item = IndexedThresholdTree<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_index >= self.num_paths() {
@@ -195,6 +284,8 @@ impl<T: Clone> Iterator for ThresholdPaths<T> {
         (remaining, Some(remaining))
     }
 }
+
+impl<T: Clone> ExactSizeIterator for ThresholdPaths<T> {}
 
 impl std::error::Error for ThresholdPathsError {}
 
@@ -256,9 +347,26 @@ mod tests {
         ThresholdTree::Leaf(value)
     }
 
+    // Helper to create indexed leaf nodes quickly
+    fn il<T: Clone>(index: usize, value: T) -> IndexedThresholdTree<T> {
+        IndexedThresholdTree::Leaf { value, index }
+    }
+
     // Helper to create threshold nodes quickly
     fn threshold<T: Clone>(k: usize, nodes: Vec<ThresholdTree<T>>) -> ThresholdTree<T> {
         ThresholdTree::Threshold(Threshold::from_iter(k, nodes.into_iter()).unwrap())
+    }
+
+    // Helper to create indexed threshold nodes quickly
+    fn ithr<T: Clone>(
+        i: usize,
+        k: usize,
+        nodes: Vec<IndexedThresholdTree<T>>,
+    ) -> IndexedThresholdTree<T> {
+        IndexedThresholdTree::Threshold {
+            thresh: Threshold::from_iter(k, nodes.into_iter()).unwrap(),
+            index: i,
+        }
     }
 
     #[test]
@@ -268,7 +376,7 @@ mod tests {
         let paths: Vec<_> = tree.paths().unwrap().collect();
 
         assert_eq!(paths.len(), 1);
-        assert_eq!(paths[0], leaf(42));
+        assert_eq!(paths[0], il(0, 42));
     }
 
     #[test]
@@ -278,8 +386,8 @@ mod tests {
         let paths: Vec<_> = tree.paths().unwrap().collect();
 
         assert_eq!(paths.len(), 2);
-        assert!(paths.contains(&leaf("a")));
-        assert!(paths.contains(&leaf("b")));
+        assert!(paths.contains(&ithr(0, 1, vec![il(0, "a")])));
+        assert!(paths.contains(&ithr(0, 1, vec![il(1, "b")])));
     }
 
     #[test]
@@ -289,7 +397,7 @@ mod tests {
         let paths: Vec<_> = tree.paths().unwrap().collect();
 
         assert_eq!(paths.len(), 1);
-        assert!(paths.contains(&threshold(2, vec![leaf("a"), leaf("b")])));
+        assert!(paths.contains(&ithr(0, 2, vec![il(0, "a"), il(1, "b")])));
     }
 
     #[test]
@@ -299,9 +407,9 @@ mod tests {
         let paths: Vec<_> = tree.paths().unwrap().collect();
 
         assert_eq!(paths.len(), 3);
-        assert!(paths.contains(&threshold(2, vec![leaf("a"), leaf("b")])));
-        assert!(paths.contains(&threshold(2, vec![leaf("a"), leaf("c")])));
-        assert!(paths.contains(&threshold(2, vec![leaf("b"), leaf("c")])));
+        assert!(paths.contains(&ithr(0, 2, vec![il(0, "a"), il(1, "b")])));
+        assert!(paths.contains(&ithr(0, 2, vec![il(0, "a"), il(2, "c")])));
+        assert!(paths.contains(&ithr(0, 2, vec![il(1, "b"), il(2, "c")])));
     }
 
     #[test]
@@ -313,11 +421,11 @@ mod tests {
         let paths: Vec<_> = tree.paths().unwrap().collect();
 
         assert_eq!(paths.len(), 5);
-        assert!(paths.contains(&threshold(2, vec![leaf("a"), leaf("b")])));
-        assert!(paths.contains(&threshold(2, vec![leaf("a"), leaf("c")])));
-        assert!(paths.contains(&threshold(2, vec![leaf("a"), leaf("d")])));
-        assert!(paths.contains(&threshold(2, vec![leaf("b"), leaf("c")])));
-        assert!(paths.contains(&threshold(2, vec![leaf("b"), leaf("d")])));
+        assert!(paths.contains(&ithr(0, 2, vec![il(0, "a"), il(1, "b")])));
+        assert!(paths.contains(&ithr(0, 2, vec![il(0, "a"), ithr(2, 1, vec![il(0, "c")])])));
+        assert!(paths.contains(&ithr(0, 2, vec![il(0, "a"), ithr(2, 1, vec![il(1, "d")])])));
+        assert!(paths.contains(&ithr(0, 2, vec![il(1, "b"), ithr(2, 1, vec![il(0, "c")])])));
+        assert!(paths.contains(&ithr(0, 2, vec![il(1, "b"), ithr(2, 1, vec![il(1, "d")])])));
     }
 
     #[test]
@@ -336,7 +444,14 @@ mod tests {
         let path23 = tree.paths().unwrap().get_path(23).unwrap();
         assert_eq!(
             path23,
-            threshold(2, vec![leaf(2), threshold(2, vec![leaf(3), leaf(5)])])
+            ithr(
+                0,
+                2,
+                vec![
+                    ithr(1, 1, vec![il(1, 2)]),
+                    ithr(3, 1, vec![ithr(1, 2, vec![il(0, 3), il(2, 5)])])
+                ]
+            )
         );
     }
 

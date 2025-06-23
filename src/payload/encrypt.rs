@@ -17,14 +17,6 @@ type Data = Vec<u8>;
 type EncryptedShare = Vec<u8>;
 type Nonce = [u8; 12];
 
-type ShamirThreshold = Threshold<ShamirTree, 0>;
-
-#[derive(Clone, Debug)]
-enum ShamirTree {
-    Leaf(EncryptedShare),
-    Threshold(ShamirThreshold),
-}
-
 /// Encrypts plaintext using a master secret, which is then sharded based on the descriptor.
 ///
 /// The master secret is used with the nonce to encrypt the plaintext via ChaCha20.
@@ -73,8 +65,8 @@ pub fn decrypt_with_authenticated_shards(
 ) -> Result<Data> {
     let cipher = AuthenticatedCipher {};
     let pks = public_keys.iter().map(Some).collect();
-    let tree = ShamirTree::reconstruct(&descriptor, &encrypted_shares)?;
-    tree.decrypt(pks, nonce, ciphertext, &cipher)
+    let tree = reconstruct(&descriptor, &encrypted_shares)?;
+    decrypt(&tree, pks, nonce, ciphertext, &cipher)
 }
 
 /// Decrypts a payload encrypted using `encrypt_with_full_secrecy` by trying all possible combinations
@@ -88,7 +80,7 @@ pub fn decrypt_with_full_secrecy(
     ciphertext: Data,
 ) -> Result<Data> {
     let cipher = UnauthenticatedCipher {};
-    let tree = ShamirTree::reconstruct(&descriptor, &encrypted_shares)?;
+    let tree = reconstruct(&descriptor, &encrypted_shares)?;
     let num_slots = encrypted_shares.len();
 
     // Deduplicate public keys
@@ -109,7 +101,7 @@ pub fn decrypt_with_full_secrecy(
     // Iterate through each generated combination and attempt decryption.
     for key_combination in combinations_iterator {
         if let Ok(decrypted_payload) =
-            tree.decrypt(key_combination, nonce, ciphertext.clone(), &cipher)
+            decrypt(&tree, key_combination, nonce, ciphertext.clone(), &cipher)
         {
             return Ok(decrypted_payload);
         }
@@ -135,7 +127,7 @@ fn encrypt_with_cipher<T: KeyCipher>(
     hasher.update(&encrypted_payload);
     let hash = hasher.finalize();
 
-    let tree = ShamirTree::build_tree(
+    let tree = build_tree(
         &keyless_node.unwrap(),
         master_encryption_key.to_vec(),
         &hash.as_slice().try_into().unwrap(),
@@ -143,191 +135,179 @@ fn encrypt_with_cipher<T: KeyCipher>(
         &mut 0,
     )?;
 
-    let encrypted_shares = tree.extract_encrypted_shares();
+    let encrypted_shares = tree.leaves();
     Ok((encrypted_shares, encrypted_payload))
 }
 
-impl ShamirTree {
-    /// Constructs a tree of encrypted shamir shares
-    fn build_tree<T: KeyCipher>(
-        node: &ThresholdTree<DescriptorPublicKey>,
-        share: Data,
-        hash: &[u8; 32],
-        cipher: &T,
-        leaf_index: &mut usize,
-    ) -> Result<Self> {
-        match node {
-            ThresholdTree::Leaf(pk) => {
-                let index = *leaf_index;
-                *leaf_index += 1;
+/// Constructs a tree of encrypted shamir shares
+fn build_tree<T: KeyCipher>(
+    node: &ThresholdTree<DescriptorPublicKey>,
+    share: Data,
+    hash: &[u8; 32],
+    cipher: &T,
+    leaf_index: &mut usize,
+) -> Result<ThresholdTree<EncryptedShare>> {
+    match node {
+        ThresholdTree::Leaf(pk) => {
+            let index = *leaf_index;
+            *leaf_index += 1;
 
-                Ok(ShamirTree::Leaf(
-                    cipher.encrypt_share(share, pk, hash, index)?,
-                ))
+            Ok(ThresholdTree::Leaf(
+                cipher.encrypt_share(share, pk, hash, index)?,
+            ))
+        }
+        ThresholdTree::Threshold(thresh) => {
+            let xs: Vec<u8> = (1..=thresh.n() as u8).collect();
+            let shares = split_secret(&share, thresh.k(), &xs).map_err(|e| anyhow!(e))?;
+            let mut shamir_nodes = Vec::new();
+            for (node, share) in thresh.iter().zip(shares.into_iter()) {
+                let tree = build_tree::<T>(node, share.ys, hash, cipher, leaf_index)?;
+                shamir_nodes.push(tree);
             }
-            ThresholdTree::Threshold(thresh) => {
-                let xs: Vec<u8> = (1..=thresh.n() as u8).collect();
-                let shares = split_secret(&share, thresh.k(), &xs).map_err(|e| anyhow!(e))?;
-                let mut shamir_nodes = Vec::new();
-                for (node, share) in thresh.iter().zip(shares.into_iter()) {
-                    let tree = Self::build_tree::<T>(node, share.ys, hash, cipher, leaf_index)?;
-                    shamir_nodes.push(tree);
-                }
-                let shamir_thresh = ShamirThreshold::new(thresh.k(), shamir_nodes)?;
+            let shamir_thresh = Threshold::new(thresh.k(), shamir_nodes)?;
 
-                Ok(ShamirTree::Threshold(shamir_thresh))
-            }
+            Ok(ThresholdTree::Threshold(shamir_thresh))
         }
     }
+}
 
-    /// Returns a list of encrypted shares (in order)
-    fn extract_encrypted_shares(&self) -> Vec<EncryptedShare> {
-        match self {
-            ShamirTree::Leaf(share) => vec![share.clone()],
-            ShamirTree::Threshold(thresh) => thresh
-                .iter()
-                .flat_map(|node| node.extract_encrypted_shares())
-                .collect(),
+/// Reconstructs a shamir tree from a descriptor and a list of shares.
+fn reconstruct(
+    descriptor: &Descriptor<DescriptorPublicKey>,
+    shares: &Vec<EncryptedShare>,
+) -> Result<ThresholdTree<EncryptedShare>> {
+    let keyless_node = descriptor.to_tree().prune_keyless();
+
+    ensure!(keyless_node.is_some(), Error::NoKeysRequired);
+
+    let mut leaf_index = 0;
+    let tree = reconstruct_tree(&keyless_node.unwrap(), shares, &mut leaf_index)?;
+
+    ensure! {
+        leaf_index == shares.len(),
+        Error::TooManyShares
+    }
+
+    Ok(tree)
+}
+
+/// Helper function to reconstruct a shamir tree.
+fn reconstruct_tree(
+    tree: &ThresholdTree<DescriptorPublicKey>,
+    shares: &Vec<EncryptedShare>,
+    leaf_index: &mut usize,
+) -> Result<ThresholdTree<EncryptedShare>> {
+    match tree {
+        ThresholdTree::Leaf(_) => {
+            ensure! {
+                *leaf_index < shares.len(),
+                Error::InsufficientShares
+            }
+
+            let index = *leaf_index;
+            *leaf_index += 1;
+
+            Ok(ThresholdTree::Leaf(shares[index].clone()))
+        }
+        ThresholdTree::Threshold(thresh) => {
+            let mut shamir_nodes = Vec::new();
+            for node_inner in thresh.iter() {
+                let tree = reconstruct_tree(node_inner, shares, leaf_index)?;
+                shamir_nodes.push(tree);
+            }
+            let shamir_thresh = Threshold::new(thresh.k(), shamir_nodes)?;
+
+            Ok(ThresholdTree::Threshold(shamir_thresh))
         }
     }
+}
 
-    /// Reconstructs a shamir tree from a descriptor and a list of shares.
-    fn reconstruct(
-        descriptor: &Descriptor<DescriptorPublicKey>,
-        shares: &Vec<EncryptedShare>,
-    ) -> Result<Self> {
-        let keyless_node = descriptor.to_tree().prune_keyless();
+/// Decrypts ciphertext reassembling the master secret using a list of public keys
+fn decrypt<T: KeyCipher>(
+    tree: &ThresholdTree<EncryptedShare>,
+    keys: Vec<Option<&DescriptorPublicKey>>,
+    nonce: Nonce,
+    ciphertext: Data,
+    cipher: &T,
+) -> Result<Data> {
+    let mut hasher = Sha256::new();
+    hasher.update(&ciphertext);
+    let hash = hasher.finalize();
 
-        ensure!(keyless_node.is_some(), Error::NoKeysRequired);
+    let secret = decrypt_tree::<T>(
+        tree,
+        &keys,
+        &hash.as_slice().try_into().unwrap(),
+        cipher,
+        &mut 0,
+        true,
+    )?;
 
-        let mut leaf_index = 0;
-        let tree = ShamirTree::reconstruct_tree(&keyless_node.unwrap(), shares, &mut leaf_index)?;
+    assert!(secret.len() == 32);
 
-        ensure! {
-            leaf_index == shares.len(),
-            Error::TooManyShares
+    cipher.decrypt_payload(ciphertext, secret.as_slice().try_into().unwrap(), nonce)
+}
+
+/// Helper function to decrypt tree of encrypted shamir shares
+fn decrypt_tree<T: KeyCipher>(
+    tree: &ThresholdTree<EncryptedShare>,
+    keys: &Vec<Option<&DescriptorPublicKey>>,
+    hash: &[u8; 32],
+    cipher: &T,
+    leaf_index: &mut usize,
+    decrypt_leaves: bool,
+) -> Result<Data, Error> {
+    match tree {
+        ThresholdTree::Leaf(encrypted_share) => {
+            let index = *leaf_index;
+            *leaf_index += 1;
+
+            if !decrypt_leaves {
+                return Ok(vec![]);
+            }
+
+            if let Ok(plaintext) = cipher.decrypt_share(encrypted_share.to_vec(), keys, hash, index)
+            {
+                return Ok(plaintext);
+            }
+
+            Err(Error::KeysRequired(1))
         }
-
-        Ok(tree)
-    }
-
-    /// Helper function to reconstruct a shamir tree.
-    fn reconstruct_tree(
-        tree: &ThresholdTree<DescriptorPublicKey>,
-        shares: &Vec<EncryptedShare>,
-        leaf_index: &mut usize,
-    ) -> Result<Self> {
-        match tree {
-            ThresholdTree::Leaf(_) => {
-                ensure! {
-                    *leaf_index < shares.len(),
-                    Error::InsufficientShares
-                }
-
-                let index = *leaf_index;
-                *leaf_index += 1;
-
-                Ok(ShamirTree::Leaf(shares[index].clone()))
-            }
-            ThresholdTree::Threshold(thresh) => {
-                let mut shamir_nodes = Vec::new();
-                for node_inner in thresh.iter() {
-                    let tree = Self::reconstruct_tree(node_inner, shares, leaf_index)?;
-                    shamir_nodes.push(tree);
-                }
-                let shamir_thresh = ShamirThreshold::new(thresh.k(), shamir_nodes)?;
-
-                Ok(ShamirTree::Threshold(shamir_thresh))
-            }
-        }
-    }
-
-    /// Decrypts ciphertext reassembling the master secret using a list of public keys
-    fn decrypt<T: KeyCipher>(
-        &self,
-        keys: Vec<Option<&DescriptorPublicKey>>,
-        nonce: Nonce,
-        ciphertext: Data,
-        cipher: &T,
-    ) -> Result<Data> {
-        let mut hasher = Sha256::new();
-        hasher.update(&ciphertext);
-        let hash = hasher.finalize();
-
-        let secret = self.decrypt_tree::<T>(
-            &keys,
-            &hash.as_slice().try_into().unwrap(),
-            cipher,
-            &mut 0,
-            true,
-        )?;
-
-        assert!(secret.len() == 32);
-
-        cipher.decrypt_payload(ciphertext, secret.as_slice().try_into().unwrap(), nonce)
-    }
-
-    /// Helper function to decrypt tree of encrypted shamir shares
-    fn decrypt_tree<T: KeyCipher>(
-        &self,
-        keys: &Vec<Option<&DescriptorPublicKey>>,
-        hash: &[u8; 32],
-        cipher: &T,
-        leaf_index: &mut usize,
-        decrypt_leaves: bool,
-    ) -> Result<Data, Error> {
-        match self {
-            ShamirTree::Leaf(encrypted_share) => {
-                let index = *leaf_index;
-                *leaf_index += 1;
-
-                if !decrypt_leaves {
-                    return Ok(vec![]);
-                }
-
-                if let Ok(plaintext) =
-                    cipher.decrypt_share(encrypted_share.to_vec(), keys, hash, index)
-                {
-                    return Ok(plaintext);
-                }
-
-                Err(Error::KeysRequired(1))
-            }
-            ShamirTree::Threshold(thresh) => {
-                let mut shares = Vec::new();
-                let mut keys_required = Vec::new();
-                for (i, node) in thresh.iter().enumerate() {
-                    match node.decrypt_tree::<T>(
-                        keys,
-                        hash,
-                        cipher,
-                        leaf_index,
-                        shares.len() < thresh.k(),
-                    ) {
-                        Ok(ys) => {
-                            let share = Share {
-                                x: (i as u8) + 1,
-                                ys,
-                            };
-                            shares.push(share);
-                        }
-                        Err(Error::KeysRequired(n)) => {
-                            keys_required.push(n);
-                        }
-                        err => return err,
+        ThresholdTree::Threshold(thresh) => {
+            let mut shares = Vec::new();
+            let mut keys_required = Vec::new();
+            for (i, node) in thresh.iter().enumerate() {
+                match decrypt_tree::<T>(
+                    node,
+                    keys,
+                    hash,
+                    cipher,
+                    leaf_index,
+                    shares.len() < thresh.k(),
+                ) {
+                    Ok(ys) => {
+                        let share = Share {
+                            x: (i as u8) + 1,
+                            ys,
+                        };
+                        shares.push(share);
                     }
+                    Err(Error::KeysRequired(n)) => {
+                        keys_required.push(n);
+                    }
+                    err => return err,
                 }
+            }
 
-                if shares.len() >= thresh.k() {
-                    reconstruct_secret(&shares, thresh.k()).map_err(Error::InvalidShamir)
-                } else {
-                    keys_required.sort();
+            if shares.len() >= thresh.k() {
+                reconstruct_secret(&shares, thresh.k()).map_err(Error::InvalidShamir)
+            } else {
+                keys_required.sort();
 
-                    let nodes_required = thresh.k() - shares.len();
-                    let min_keys_required = keys_required[0..nodes_required].iter().sum();
+                let nodes_required = thresh.k() - shares.len();
+                let min_keys_required = keys_required[0..nodes_required].iter().sum();
 
-                    Err(Error::KeysRequired(min_keys_required))
-                }
+                Err(Error::KeysRequired(min_keys_required))
             }
         }
     }

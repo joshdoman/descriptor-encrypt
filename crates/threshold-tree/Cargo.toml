@@ -1,0 +1,15 @@
+[package]
+name = "threshold-tree"
+version = "0.1.0"
+description = "Library for constructing and iterating over a tree of threshold conditions"
+
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+itertools.workspace = true
+miniscript.workspace = true

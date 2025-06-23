@@ -4,16 +4,13 @@ use itertools::Itertools;
 use miniscript::Threshold;
 use std::fmt;
 
-/// A threshold of trees
-pub type TreeThreshold<T> = Threshold<ThresholdTree<T>, 0>;
-
 /// A tree can a key, or a threshold of trees
 #[derive(Clone, Debug)]
 pub enum ThresholdTree<T: Clone> {
     /// A leaf
     Leaf(T),
     /// A threshold of trees
-    Threshold(TreeThreshold<T>),
+    Threshold(Threshold<ThresholdTree<T>, 0>),
 }
 
 /// Private enum that extends ThresholdTree with cached path counts

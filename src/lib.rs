@@ -285,7 +285,7 @@ pub fn get_origin_derivation_paths(data: &[u8]) -> Result<Vec<DerivationPath>> {
     let (template, _) = template::decode(&data[1..])?;
 
     let mut paths = Vec::new();
-    for key in template.clone().to_tree().get_keys() {
+    for key in template.clone().to_tree().keys() {
         let origin = match key {
             DescriptorPublicKey::XPub(xpub) => xpub.origin,
             DescriptorPublicKey::MultiXPub(xpub) => xpub.origin,
@@ -323,7 +323,7 @@ mod tests {
         for desc_str in descriptors {
             let desc = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
 
-            let keys = desc.clone().to_tree().get_keys();
+            let keys = desc.clone().to_tree().keys();
             let ciphertext = encrypt(desc.clone()).unwrap();
             assert_eq!(desc, decrypt(&ciphertext, keys.clone()).unwrap());
             assert!(get_template(&ciphertext).is_ok());

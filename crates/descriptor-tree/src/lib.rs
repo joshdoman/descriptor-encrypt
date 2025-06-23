@@ -26,12 +26,12 @@ pub trait ToDescriptorTree<Pk: MiniscriptKey> {
 
 impl<Pk: MiniscriptKey> DescriptorTree<Pk> {
     /// Returns a list of keys in the descriptor
-    pub fn get_keys(&self) -> Vec<Pk> {
+    pub fn keys(&self) -> Vec<Pk> {
         match self {
             DescriptorTree::Keyless(_) => Vec::new(),
             DescriptorTree::Key(pk) => vec![pk.clone()],
             DescriptorTree::Threshold(thresh) => {
-                thresh.iter().flat_map(|tree| tree.get_keys()).collect()
+                thresh.iter().flat_map(|tree| tree.keys()).collect()
             }
         }
     }
@@ -272,18 +272,18 @@ mod tests {
     }
 
     #[test]
-    fn test_get_keys_single() {
+    fn test_keys_single() {
         // Test with a single key
         let key = create_test_key(1);
         let tree = DescriptorTree::Key(key.clone());
 
-        let keys = tree.get_keys();
+        let keys = tree.keys();
         assert_eq!(keys.len(), 1);
         assert!(keys.contains(&key));
     }
 
     #[test]
-    fn test_get_keys_threshold() {
+    fn test_keys_threshold() {
         // Create a 2-of-3 threshold
         let key1 = create_test_key(1);
         let key2 = create_test_key(2);
@@ -298,7 +298,7 @@ mod tests {
         let thresh = Threshold::new(2, trees).unwrap();
         let tree = DescriptorTree::Threshold(thresh);
 
-        let keys = tree.get_keys();
+        let keys = tree.keys();
         assert_eq!(keys.len(), 3);
         assert!(keys.contains(&key1));
         assert!(keys.contains(&key2));
@@ -541,7 +541,7 @@ mod tests {
 
         let tree = desc.to_tree();
 
-        let keys = tree.get_keys();
+        let keys = tree.keys();
         assert_eq!(keys.len(), 3);
 
         // Should be a threshold with 3 key trees
@@ -577,7 +577,7 @@ mod tests {
 
         let tree = desc.to_tree();
 
-        let keys = tree.get_keys();
+        let keys = tree.keys();
         assert_eq!(keys.len(), 2);
 
         // Should be a threshold with 2 key trees
@@ -608,7 +608,7 @@ mod tests {
 
         let tree = desc.to_tree();
 
-        let keys = tree.get_keys();
+        let keys = tree.keys();
         assert_eq!(keys.len(), 1);
 
         // Should be a threshold tree with just the internal key
@@ -638,7 +638,7 @@ mod tests {
 
         let tree = desc.to_tree();
 
-        let keys = tree.get_keys();
+        let keys = tree.keys();
         assert_eq!(keys.len(), 2);
 
         // Should be a threshold with internal key and script key
@@ -664,7 +664,7 @@ mod tests {
 
         let tree = desc.to_tree();
 
-        let keys = tree.get_keys();
+        let keys = tree.keys();
         assert_eq!(keys.len(), 3);
 
         // Should be a threshold with internal key and two script keys
@@ -699,7 +699,7 @@ mod tests {
 
         let tree = desc.to_tree();
 
-        let keys = tree.get_keys();
+        let keys = tree.keys();
         assert_eq!(keys.len(), 2);
 
         // Should be a threshold requiring all (k=n)
@@ -732,7 +732,7 @@ mod tests {
 
         let tree = desc.to_tree();
 
-        let keys = tree.get_keys();
+        let keys = tree.keys();
         assert_eq!(keys.len(), 2);
 
         // Should be a 1-of-n threshold
@@ -767,7 +767,7 @@ mod tests {
 
         let tree = desc.to_tree();
 
-        let keys = tree.get_keys();
+        let keys = tree.keys();
         assert_eq!(keys.len(), 3);
 
         // Should be a 2-of-3 threshold
@@ -806,7 +806,7 @@ mod tests {
         let tree = desc.to_tree();
 
         // Extract keys and ensure all 3 keys are there
-        let keys = tree.get_keys();
+        let keys = tree.keys();
         assert_eq!(keys.len(), 3);
 
         let key_serialized1 = serialize_descriptor_pubkey(&key1);
@@ -831,7 +831,7 @@ mod tests {
 
         let tree = desc.to_tree();
 
-        let keys = tree.get_keys();
+        let keys = tree.keys();
         assert_eq!(keys.len(), 1);
 
         // Should be a threshold with one real key and the timelock becomes keyless
@@ -874,7 +874,7 @@ mod tests {
         let tree = desc.to_tree();
 
         // Extract keys
-        let keys = tree.get_keys();
+        let keys = tree.keys();
         assert_eq!(keys.len(), 2);
 
         let key_serialized1 = serialize_descriptor_pubkey(&key1);
@@ -907,7 +907,7 @@ mod tests {
         let tree = desc.to_tree();
 
         // Extract keys
-        let keys = tree.get_keys();
+        let keys = tree.keys();
         assert_eq!(keys.len(), 3);
 
         let key_serialized1 = serialize_descriptor_pubkey(&key1);

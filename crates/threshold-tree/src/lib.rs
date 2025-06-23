@@ -4,7 +4,7 @@ use itertools::Itertools;
 use miniscript::Threshold;
 use std::fmt;
 
-/// A tree can a key, or a threshold of trees
+/// A tree can a leaf, or a threshold of trees
 #[derive(Clone, Debug)]
 pub enum ThresholdTree<T: Clone> {
     /// A leaf

@@ -45,7 +45,7 @@ pub struct ThresholdPaths<T: Clone> {
 }
 
 impl<T: Clone> ThresholdTree<T> {
-    /// Returns a list of leaves in the descriptor
+    /// Get the leaves in the tree
     pub fn leaves(&self) -> Vec<T> {
         match self {
             Self::Leaf(value) => vec![value.clone()],
@@ -100,6 +100,14 @@ impl<T: Clone> ThresholdTree<T> {
 }
 
 impl<T: Clone> ThresholdTreeWithPaths<T> {
+    /// Get the leaves in the tree
+    pub fn leaves(&self) -> Vec<T> {
+        match self {
+            Self::Leaf(value) => vec![value.clone()],
+            Self::Threshold(thresh, ..) => thresh.iter().flat_map(|tree| tree.leaves()).collect(),
+        }
+    }
+
     /// Get the cached path count
     fn num_paths(&self) -> usize {
         match self {
@@ -145,6 +153,11 @@ impl<T: Clone> ThresholdTreeWithPaths<T> {
 }
 
 impl<T: Clone> ThresholdPaths<T> {
+    /// Get the leaves in the tree
+    pub fn leaves(&self) -> Vec<T> {
+        self.tree.leaves()
+    }
+
     /// Get the number of paths
     pub fn num_paths(&self) -> usize {
         self.tree.num_paths()

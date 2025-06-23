@@ -1,7 +1,7 @@
 [package]
 name = "threshold-tree"
 version = "0.1.0"
-description = "Library for constructing and iterating over a tree of threshold conditions"
+description = "A library for iterating over paths through a tree of threshold conditions"
 
 authors.workspace = true
 edition.workspace = true

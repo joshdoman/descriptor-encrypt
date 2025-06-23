@@ -63,15 +63,12 @@ impl<T: Clone> ThresholdTree<T> {
         match self {
             ThresholdTree::Leaf(value) => Ok(ThresholdTreeWithPaths::Leaf(value.clone())),
             ThresholdTree::Threshold(t) => {
-                let mut nodes = Vec::new();
-                for node in t.iter() {
-                    nodes.push(node.to_tree_with_paths()?);
-                }
-                let threshold = Threshold::new(t.k(), nodes).unwrap();
-
                 if binomial(t.n(), t.k()) > MAX_PATHS {
                     return Err(ThresholdPathsError::ExcessivePaths);
                 }
+
+                let nodes: Result<Vec<_>, _> = t.iter().map(|n| n.to_tree_with_paths()).collect();
+                let threshold = Threshold::new(t.k(), nodes?).unwrap();
 
                 let subpath_counts: Vec<usize> = threshold
                     .iter()

@@ -45,6 +45,14 @@ pub struct ThresholdPaths<T: Clone> {
 }
 
 impl<T: Clone> ThresholdTree<T> {
+    /// Returns a list of leaves in the descriptor
+    pub fn leaves(&self) -> Vec<T> {
+        match self {
+            Self::Leaf(value) => vec![value.clone()],
+            Self::Threshold(thresh) => thresh.iter().flat_map(|tree| tree.leaves()).collect(),
+        }
+    }
+
     /// Get an iterator over all paths through the tree
     pub fn paths(&self) -> Result<ThresholdPaths<T>, ThresholdPathsError> {
         Ok(ThresholdPaths {

@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: CC0-1.0
 
 use anyhow::{Result, anyhow, ensure};
-use descriptor_tree::{KeylessDescriptorTree, ToDescriptorTree};
+use descriptor_tree::ToDescriptorTree;
 use itertools::Itertools;
 use miniscript::{
     Threshold,
     descriptor::{Descriptor, DescriptorPublicKey},
 };
 use sha2::{Digest, Sha256};
+use threshold_tree::ThresholdTree;
 
 use super::cipher::{AuthenticatedCipher, KeyCipher, UnauthenticatedCipher};
 use super::shamir::{Share, reconstruct_secret, split_secret};
@@ -149,14 +150,14 @@ fn encrypt_with_cipher<T: KeyCipher>(
 impl ShamirTree {
     /// Constructs a tree of encrypted shamir shares
     fn build_tree<T: KeyCipher>(
-        node: &KeylessDescriptorTree<DescriptorPublicKey>,
+        node: &ThresholdTree<DescriptorPublicKey>,
         share: Data,
         hash: &[u8; 32],
         cipher: &T,
         leaf_index: &mut usize,
     ) -> Result<Self> {
         match node {
-            KeylessDescriptorTree::Key(pk) => {
+            ThresholdTree::Leaf(pk) => {
                 let index = *leaf_index;
                 *leaf_index += 1;
 
@@ -164,7 +165,7 @@ impl ShamirTree {
                     cipher.encrypt_share(share, pk, hash, index)?,
                 ))
             }
-            KeylessDescriptorTree::Threshold(thresh) => {
+            ThresholdTree::Threshold(thresh) => {
                 let xs: Vec<u8> = (1..=thresh.n() as u8).collect();
                 let shares = split_secret(&share, thresh.k(), &xs).map_err(|e| anyhow!(e))?;
                 let mut shamir_nodes = Vec::new();
@@ -212,12 +213,12 @@ impl ShamirTree {
 
     /// Helper function to reconstruct a shamir tree.
     fn reconstruct_tree(
-        tree: &KeylessDescriptorTree<DescriptorPublicKey>,
+        tree: &ThresholdTree<DescriptorPublicKey>,
         shares: &Vec<EncryptedShare>,
         leaf_index: &mut usize,
     ) -> Result<Self> {
         match tree {
-            KeylessDescriptorTree::Key(_) => {
+            ThresholdTree::Leaf(_) => {
                 ensure! {
                     *leaf_index < shares.len(),
                     Error::InsufficientShares
@@ -228,7 +229,7 @@ impl ShamirTree {
 
                 Ok(ShamirTree::Leaf(shares[index].clone()))
             }
-            KeylessDescriptorTree::Threshold(thresh) => {
+            ThresholdTree::Threshold(thresh) => {
                 let mut shamir_nodes = Vec::new();
                 for node_inner in thresh.iter() {
                     let tree = Self::reconstruct_tree(node_inner, shares, leaf_index)?;

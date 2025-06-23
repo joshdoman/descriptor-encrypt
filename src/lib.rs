@@ -221,7 +221,7 @@ pub fn decrypt(
     let (template, size) = template::decode(data)?;
 
     let num_keys = if let Some(pruned_tree) = template.clone().to_tree().prune_keyless() {
-        pruned_tree.get_keys().len()
+        pruned_tree.leaves().len()
     } else {
         0
     };

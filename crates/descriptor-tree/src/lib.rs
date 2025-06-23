@@ -5,9 +5,7 @@ use miniscript::{
     descriptor::{Descriptor, Sh, ShInner, SortedMultiVec, Tr, Wsh, WshInner},
     miniscript::decode::Terminal,
 };
-
-type DescriptorTreeThreshold<Pk> = Threshold<DescriptorTree<Pk>, 0>;
-type KeylessDescriptorTreeThreshold<Pk> = Threshold<KeylessDescriptorTree<Pk>, 0>;
+use threshold_tree::ThresholdTree;
 
 /// A tree can be keyless, a key, or a threshold of trees
 #[derive(Clone, Debug)]
@@ -17,34 +15,13 @@ pub enum DescriptorTree<Pk: MiniscriptKey> {
     /// A key
     Key(Pk),
     /// A threshold of trees
-    Threshold(DescriptorTreeThreshold<Pk>),
-}
-
-/// A tree can a key, or a threshold of trees
-#[derive(Clone, Debug)]
-pub enum KeylessDescriptorTree<Pk: MiniscriptKey> {
-    /// A key
-    Key(Pk),
-    /// A threshold of trees
-    Threshold(KeylessDescriptorTreeThreshold<Pk>),
+    Threshold(Threshold<DescriptorTree<Pk>, 0>),
 }
 
 /// A trait to construct a descriptor tree
 pub trait ToDescriptorTree<Pk: MiniscriptKey> {
     /// Returns a descriptor tree
     fn to_tree(&self) -> DescriptorTree<Pk>;
-}
-
-impl<Pk: MiniscriptKey> KeylessDescriptorTree<Pk> {
-    /// Returns a list of keys in the pruned descriptor
-    pub fn get_keys(&self) -> Vec<Pk> {
-        match self {
-            KeylessDescriptorTree::Key(pk) => vec![pk.clone()],
-            KeylessDescriptorTree::Threshold(thresh) => {
-                thresh.iter().flat_map(|tree| tree.get_keys()).collect()
-            }
-        }
-    }
 }
 
 impl<Pk: MiniscriptKey> DescriptorTree<Pk> {
@@ -61,16 +38,16 @@ impl<Pk: MiniscriptKey> DescriptorTree<Pk> {
 
     /// Prune keyless leaves assuming satisifiable conditions are satisfied.
     /// Sets new_k = max(old_k - num(satisfiable keyless leaves), 0) in each threshold.
-    pub fn prune_keyless(&self) -> Option<KeylessDescriptorTree<Pk>> {
+    pub fn prune_keyless(&self) -> Option<ThresholdTree<Pk>> {
         let (_, pruned_tree) = self.prune_keyless_with_satisfiability();
         pruned_tree
     }
 
     /// Returns pruned tree and whether its satisfiable
-    fn prune_keyless_with_satisfiability(&self) -> (bool, Option<KeylessDescriptorTree<Pk>>) {
+    fn prune_keyless_with_satisfiability(&self) -> (bool, Option<ThresholdTree<Pk>>) {
         match self {
             DescriptorTree::Keyless(satisfiable) => (*satisfiable, None),
-            DescriptorTree::Key(pk) => (true, Some(KeylessDescriptorTree::Key(pk.clone()))),
+            DescriptorTree::Key(pk) => (true, Some(ThresholdTree::Leaf(pk.clone()))),
             DescriptorTree::Threshold(thresh) => {
                 let mut assume_satisfied = 0;
                 let mut keyed_subtrees = Vec::new();
@@ -97,9 +74,9 @@ impl<Pk: MiniscriptKey> DescriptorTree<Pk> {
                         if k <= n {
                             (
                                 true,
-                                KeylessDescriptorTreeThreshold::new(new_k, keyed_subtrees)
+                                Threshold::new(new_k, keyed_subtrees)
                                     .ok()
-                                    .map(KeylessDescriptorTree::Threshold),
+                                    .map(ThresholdTree::Threshold),
                             )
                         } else {
                             (false, None)
@@ -116,7 +93,7 @@ impl<Pk: MiniscriptKey> DescriptorTree<Pk> {
     {
         let tree0 = ms0.to_tree();
         let tree1 = ms1.to_tree();
-        let thresh = DescriptorTreeThreshold::and(tree0, tree1);
+        let thresh = Threshold::and(tree0, tree1);
 
         DescriptorTree::Threshold(thresh)
     }
@@ -127,7 +104,7 @@ impl<Pk: MiniscriptKey> DescriptorTree<Pk> {
     {
         let tree0 = ms0.to_tree();
         let tree1 = ms1.to_tree();
-        let thresh = DescriptorTreeThreshold::or(tree0, tree1);
+        let thresh = Threshold::or(tree0, tree1);
 
         DescriptorTree::Threshold(thresh)
     }
@@ -141,7 +118,7 @@ impl<Pk: MiniscriptKey> DescriptorTree<Pk> {
             .iter()
             .map(|pk| DescriptorTree::Key(pk.clone()))
             .collect();
-        let thresh = DescriptorTreeThreshold::new(sortedmulti.k(), trees).unwrap();
+        let thresh = Threshold::new(sortedmulti.k(), trees).unwrap();
 
         DescriptorTree::Threshold(thresh)
     }
@@ -193,7 +170,7 @@ impl<Pk: MiniscriptKey> ToDescriptorTree<Pk> for Tr<Pk> {
             trees.push(ms.to_tree());
         }
 
-        let thresh = DescriptorTreeThreshold::or_n(trees);
+        let thresh = Threshold::or_n(trees);
 
         DescriptorTree::Threshold(thresh)
     }
@@ -225,7 +202,7 @@ impl<Pk: MiniscriptKey, Ctx: ScriptContext> ToDescriptorTree<Pk> for Miniscript<
             Terminal::AndOr(ms0, ms1, ms2) => {
                 let and_tree = DescriptorTree::from_ms_and(ms0, ms1);
                 let or_tree = ms2.to_tree();
-                let thresh = DescriptorTreeThreshold::or(and_tree, or_tree);
+                let thresh = Threshold::or(and_tree, or_tree);
 
                 DescriptorTree::Threshold(thresh)
             }
@@ -239,7 +216,7 @@ impl<Pk: MiniscriptKey, Ctx: ScriptContext> ToDescriptorTree<Pk> for Miniscript<
                     let tree = ms.to_tree();
                     trees.push(tree);
                 }
-                let thresh = DescriptorTreeThreshold::new(thresh.k(), trees).unwrap();
+                let thresh = Threshold::new(thresh.k(), trees).unwrap();
 
                 DescriptorTree::Threshold(thresh)
             }
@@ -248,7 +225,7 @@ impl<Pk: MiniscriptKey, Ctx: ScriptContext> ToDescriptorTree<Pk> for Miniscript<
                     .iter()
                     .map(|pk| DescriptorTree::Key(pk.clone()))
                     .collect();
-                let thresh = DescriptorTreeThreshold::new(thresh.k(), trees).unwrap();
+                let thresh = Threshold::new(thresh.k(), trees).unwrap();
 
                 DescriptorTree::Threshold(thresh)
             }
@@ -257,7 +234,7 @@ impl<Pk: MiniscriptKey, Ctx: ScriptContext> ToDescriptorTree<Pk> for Miniscript<
                     .iter()
                     .map(|pk| DescriptorTree::Key(pk.clone()))
                     .collect();
-                let thresh = DescriptorTreeThreshold::new(thresh.k(), trees).unwrap();
+                let thresh = Threshold::new(thresh.k(), trees).unwrap();
 
                 DescriptorTree::Threshold(thresh)
             }
@@ -318,7 +295,7 @@ mod tests {
             DescriptorTree::Key(key3.clone()),
         ];
 
-        let thresh = DescriptorTreeThreshold::new(2, trees).unwrap();
+        let thresh = Threshold::new(2, trees).unwrap();
         let tree = DescriptorTree::Threshold(thresh);
 
         let keys = tree.get_keys();
@@ -326,27 +303,6 @@ mod tests {
         assert!(keys.contains(&key1));
         assert!(keys.contains(&key2));
         assert!(keys.contains(&key3));
-    }
-
-    #[test]
-    fn test_get_keys_with_keyless() {
-        // Create a threshold with some keyless trees
-        let key1 = create_test_key(1);
-        let key2 = create_test_key(2);
-
-        let trees = vec![
-            DescriptorTree::Key(key1.clone()),
-            DescriptorTree::Keyless::<DescriptorPublicKey>(true),
-            DescriptorTree::Key(key2.clone()),
-        ];
-
-        let thresh = DescriptorTreeThreshold::new(2, trees).unwrap();
-        let tree = DescriptorTree::Threshold(thresh);
-
-        let keys = tree.get_keys();
-        assert_eq!(keys.len(), 2);
-        assert!(keys.contains(&key1));
-        assert!(keys.contains(&key2));
     }
 
     #[test]
@@ -359,7 +315,7 @@ mod tests {
         assert!(result.is_some());
 
         match result.unwrap() {
-            KeylessDescriptorTree::Key(k) => assert_eq!(k, key),
+            ThresholdTree::Leaf(k) => assert_eq!(k, key),
             _ => panic!("Expected Key tree"),
         }
 
@@ -382,21 +338,21 @@ mod tests {
             DescriptorTree::Key(key2.clone()),
         ];
 
-        let thresh = DescriptorTreeThreshold::new(2, trees).unwrap();
+        let thresh = Threshold::new(2, trees).unwrap();
         let tree = DescriptorTree::Threshold(thresh);
 
         let result = tree.prune_keyless();
         assert!(result.is_some());
 
         match result.unwrap() {
-            KeylessDescriptorTree::Threshold(t) => {
+            ThresholdTree::Threshold(t) => {
                 assert_eq!(t.k(), 1);
                 assert_eq!(t.n(), 2);
 
                 // Check that the keys are the same
                 let mut keys = Vec::new();
                 for subtree in t.iter() {
-                    if let KeylessDescriptorTree::Key(pk) = subtree {
+                    if let ThresholdTree::Leaf(pk) = subtree {
                         keys.push(pk.clone())
                     }
                 }
@@ -421,21 +377,21 @@ mod tests {
             DescriptorTree::Key(key2.clone()),
         ];
 
-        let thresh = DescriptorTreeThreshold::new(3, trees).unwrap();
+        let thresh = Threshold::new(3, trees).unwrap();
         let tree = DescriptorTree::Threshold(thresh);
 
         let result = tree.prune_keyless();
         assert!(result.is_some());
 
         match result.unwrap() {
-            KeylessDescriptorTree::Threshold(t) => {
+            ThresholdTree::Threshold(t) => {
                 assert_eq!(t.k(), 1); // Reduced from 3 to 1
                 assert_eq!(t.n(), 2);
 
                 // Check that the keys are the same
                 let mut keys = Vec::new();
                 for subtree in t.iter() {
-                    if let KeylessDescriptorTree::Key(pk) = subtree {
+                    if let ThresholdTree::Leaf(pk) = subtree {
                         keys.push(pk.clone())
                     }
                 }
@@ -454,7 +410,7 @@ mod tests {
             DescriptorTree::Keyless::<DescriptorPublicKey>(true),
         ];
 
-        let thresh = DescriptorTreeThreshold::new(1, trees).unwrap();
+        let thresh = Threshold::new(1, trees).unwrap();
         let tree = DescriptorTree::Threshold(thresh);
 
         let result = tree.prune_keyless();
@@ -471,7 +427,7 @@ mod tests {
             DescriptorTree::Keyless::<DescriptorPublicKey>(true),
         ];
 
-        let thresh = DescriptorTreeThreshold::new(2, trees).unwrap();
+        let thresh = Threshold::new(2, trees).unwrap();
         let tree = DescriptorTree::Threshold(thresh);
 
         let result = tree.prune_keyless();
@@ -483,7 +439,7 @@ mod tests {
             DescriptorTree::Keyless::<DescriptorPublicKey>(false),
         ];
 
-        let thresh = DescriptorTreeThreshold::new(2, trees).unwrap();
+        let thresh = Threshold::new(2, trees).unwrap();
         let tree = DescriptorTree::Threshold(thresh);
 
         let result = tree.prune_keyless();
@@ -500,7 +456,7 @@ mod tests {
             DescriptorTree::Keyless::<DescriptorPublicKey>(true),
         ];
 
-        let thresh = DescriptorTreeThreshold::new(2, trees).unwrap();
+        let thresh = Threshold::new(2, trees).unwrap();
         let tree = DescriptorTree::Threshold(thresh);
 
         let result = tree.prune_keyless();
@@ -508,7 +464,7 @@ mod tests {
 
         // After pruning, we should be left with just the key tree
         match result.unwrap() {
-            KeylessDescriptorTree::Key(k) => assert_eq!(k, key),
+            ThresholdTree::Leaf(k) => assert_eq!(k, key),
             _ => panic!("Expected a single Key tree"),
         }
     }
@@ -891,7 +847,7 @@ mod tests {
 
                 // After removing keyless, should just have a single key
                 match keyless.unwrap() {
-                    KeylessDescriptorTree::Key(k) => {
+                    ThresholdTree::Leaf(k) => {
                         let k_serialized = serialize_descriptor_pubkey(&k);
                         assert_eq!(k_serialized, key_serialized);
                     }

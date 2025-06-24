@@ -122,6 +122,7 @@ use bitcoin::bip32::DerivationPath;
 use descriptor_tree::ToDescriptorTree;
 use miniscript::{Descriptor, DescriptorPublicKey};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 
 /// Options for encryption that can be passed to encrypt_with_options
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -129,8 +130,12 @@ pub enum EncryptOption {
     /// Full secrecy: no information is gained about key inclusion unless
     /// the descriptor can be decrypted.
     ///
-    /// Represented by the first bit in the version byte.
-    FullSecrecy = 1,
+    /// Represented by the first bit in the first byte.
+    FullSecrecy = 1 << 0,
+    /// Flag to signal no key reuse during decryption
+    ///
+    /// Represented by the second bit in the first byte.
+    NoKeyReuse = 1 << 1,
 }
 
 /// Encrypts a descriptor such that it can only be recovered by a set of
@@ -153,8 +158,24 @@ pub fn encrypt_with_full_secrecy(desc: Descriptor<DescriptorPublicKey>) -> Resul
 /// Encrypts a descriptor with the specified options.
 pub fn encrypt_with_options(
     desc: Descriptor<DescriptorPublicKey>,
-    options: Vec<EncryptOption>,
+    mut options: Vec<EncryptOption>,
 ) -> Result<Vec<u8>> {
+    let Some(pruned_desc_tree) = desc.to_tree().prune_keyless() else {
+        return Err(anyhow!("Descriptor must require a key"));
+    };
+
+    // Check if distinct keys are used within each path (reuse allowed across paths)
+    if let Ok(mut paths) = pruned_desc_tree.paths() {
+        let no_key_reuse = paths.all(|path| {
+            let mut set = HashSet::new();
+            path.leaves().iter().all(|key| set.insert(key))
+        });
+
+        if no_key_reuse {
+            options.push(EncryptOption::NoKeyReuse);
+        }
+    }
+
     let version_byte = options.iter().fold(0u8, |acc, &option| acc | option as u8);
 
     let (template, payload) = template::encode(desc.clone());
@@ -281,7 +302,7 @@ fn get_options(data: &[u8]) -> Result<Vec<EncryptOption>> {
     let mut options = Vec::new();
     let mut remaining_bits = data[0];
 
-    for option in [EncryptOption::FullSecrecy] {
+    for option in [EncryptOption::FullSecrecy, EncryptOption::NoKeyReuse] {
         if data[0] & option as u8 != 0 {
             options.push(option);
             remaining_bits ^= option as u8;
@@ -332,6 +353,35 @@ mod tests {
     }
 
     #[test]
+    fn test_no_key_reuse_flag() {
+        // Distinct keys within each path (1-of-3 multisig using 2 distinct keys)
+        let distinct_keys_desc_str = "wsh(multi(1,02d7924d4f7d43ea965a465ae3095ff41131e5946f3c85f79e44adbcf8e27e080e,02d7924d4f7d43ea965a465ae3095ff41131e5946f3c85f79e44adbcf8e27e080e,023e9be8b82c7469c88b1912a61611dffb9f65bbf5a176952727e0046513eca0de))";
+        let distinct_keys_desc =
+            Descriptor::<DescriptorPublicKey>::from_str(distinct_keys_desc_str).unwrap();
+
+        let ciphertext = encrypt(distinct_keys_desc.clone()).unwrap();
+        let options = get_options(&ciphertext).unwrap();
+
+        assert!(
+            options.contains(&EncryptOption::NoKeyReuse),
+            "NoKeyReuse flag should be set when no keys reused within a path"
+        );
+
+        // Reused key within a path (2-of-3 reusing a key)
+        let reused_keys_desc_str = "wsh(multi(2,02d7924d4f7d43ea965a465ae3095ff41131e5946f3c85f79e44adbcf8e27e080e,02d7924d4f7d43ea965a465ae3095ff41131e5946f3c85f79e44adbcf8e27e080e,023e9be8b82c7469c88b1912a61611dffb9f65bbf5a176952727e0046513eca0de))";
+        let reused_keys_desc =
+            Descriptor::<DescriptorPublicKey>::from_str(reused_keys_desc_str).unwrap();
+
+        let ciphertext = encrypt(reused_keys_desc.clone()).unwrap();
+        let options = get_options(&ciphertext).unwrap();
+
+        assert!(
+            !options.contains(&EncryptOption::NoKeyReuse),
+            "NoKeyReuse flag should NOT be set for a descriptor with reused keys in a path"
+        );
+    }
+
+    #[test]
     fn test_unsupported_version() {
         let desc_str = "wpkh(02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9)";
         let desc = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
@@ -339,7 +389,7 @@ mod tests {
         // Modify the version byte to an invalid version
         let mut encrypted_data = encrypt(desc.clone()).unwrap();
 
-        for i in 2..0xFF {
+        for i in 4..0xFF {
             encrypted_data[0] = i;
 
             let template_result = get_template(&encrypted_data);

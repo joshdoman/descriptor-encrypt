@@ -171,7 +171,9 @@ pub fn encrypt_with_options(
             path.leaves().iter().all(|key| set.insert(key))
         });
 
-        if no_key_reuse {
+        if options.contains(&EncryptOption::NoKeyReuse) {
+            return Err(anyhow!("Descriptor reuses a key"));
+        } else if no_key_reuse {
             options.push(EncryptOption::NoKeyReuse);
         }
     }
@@ -189,7 +191,7 @@ pub fn encrypt_with_options(
     // Encrypt payload and shard encryption key into encrypted shares (1 per key)
     let nonce = [0u8; 12];
     let (encrypted_shares, encrypted_payload) =
-        if version_byte & EncryptOption::FullSecrecy as u8 != 0 {
+        if options.contains(&EncryptOption::FullSecrecy) {
             payload::encrypt_with_full_secrecy(desc, encryption_key.into(), nonce, payload)?
         } else {
             payload::encrypt_with_authenticated_shards(desc, encryption_key.into(), nonce, payload)?

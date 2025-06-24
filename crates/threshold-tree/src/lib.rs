@@ -105,6 +105,14 @@ impl<T: Clone> ThresholdTree<T> {
 }
 
 impl<T: Clone> IndexedThresholdTree<T> {
+    /// Get the index of the tree
+    pub fn index(&self) -> usize {
+        match self {
+            Self::Leaf { index, .. } => *index,
+            Self::Threshold { index, .. } => *index,
+        }
+    }
+
     /// Get the leaves in the tree in left-to-right order
     pub fn leaves(&self) -> Vec<T> {
         match self {

@@ -8,7 +8,7 @@ use miniscript::{
     descriptor::{Descriptor, DescriptorPublicKey},
 };
 use sha2::{Digest, Sha256};
-use threshold_tree::ThresholdTree;
+use threshold_tree::{IndexedThresholdTree, ThresholdTree};
 
 use super::cipher::{AuthenticatedCipher, KeyCipher, UnauthenticatedCipher};
 use super::shamir::{Share, reconstruct_secret, split_secret};
@@ -72,7 +72,7 @@ pub fn decrypt_with_authenticated_shards(
     let cipher = AuthenticatedCipher {};
     let pks = public_keys.iter().map(Some).collect();
     let tree = reconstruct(&descriptor, &encrypted_shares)?;
-    decrypt(&tree, pks, nonce, ciphertext, &cipher)
+    decrypt(&tree.indexed(), pks, nonce, ciphertext, &cipher)
 }
 
 /// Decrypts a payload encrypted using `encrypt_with_full_secrecy` by trying all possible combinations
@@ -98,15 +98,14 @@ pub fn decrypt_with_full_secrecy(
         unique_keys.iter().map(Some).collect();
 
     // Create an iterator over paths through the tree
-    let paths: Box<dyn Iterator<Item = ThresholdTree<IndexedShare>>> = if let Ok(_) = tree.paths() {
-        // TODO: Implement Box::new(paths)
-        choices_for_each_slot.push(None);
-        Box::new(std::iter::once(tree))
-    } else {
-        // Unable to trace paths (too many), so add None as an option for each slot
-        choices_for_each_slot.push(None);
-        Box::new(std::iter::once(tree))
-    };
+    let paths: Box<dyn Iterator<Item = IndexedThresholdTree<IndexedShare>>> =
+        if let Ok(paths) = tree.paths() {
+            Box::new(paths)
+        } else {
+            // Too many paths, so add None as an option for each slot and iterate over full tree
+            choices_for_each_slot.push(None);
+            Box::new(std::iter::once(tree.indexed()))
+        };
 
     // Iterate through each path and attempt decryption with each combination.
     for path in paths {
@@ -243,7 +242,7 @@ fn reconstruct_tree(
 
 /// Decrypts ciphertext reassembling the master secret using a list of public keys
 fn decrypt<T: KeyCipher>(
-    tree: &ThresholdTree<IndexedShare>,
+    tree: &IndexedThresholdTree<IndexedShare>,
     keys: Vec<Option<&DescriptorPublicKey>>,
     nonce: Nonce,
     ciphertext: Data,
@@ -269,7 +268,7 @@ fn decrypt<T: KeyCipher>(
 
 /// Helper function to decrypt tree of encrypted shamir shares
 fn decrypt_tree<T: KeyCipher>(
-    tree: &ThresholdTree<IndexedShare>,
+    tree: &IndexedThresholdTree<IndexedShare>,
     keys: &Vec<Option<&DescriptorPublicKey>>,
     key_index: &mut usize,
     hash: &[u8; 32],
@@ -277,8 +276,8 @@ fn decrypt_tree<T: KeyCipher>(
     decrypt_leaves: bool,
 ) -> Result<Data, Error> {
     match tree {
-        ThresholdTree::Leaf(leaf) => {
-            let index = *key_index;
+        IndexedThresholdTree::Leaf { value, .. } => {
+            let k_index = *key_index;
             *key_index += 1;
 
             if !decrypt_leaves {
@@ -286,17 +285,17 @@ fn decrypt_tree<T: KeyCipher>(
             }
 
             if let Ok(plaintext) =
-                cipher.decrypt_share(leaf.share.clone(), keys, index, hash, leaf.index)
+                cipher.decrypt_share(value.share.clone(), keys, k_index, hash, value.index)
             {
                 return Ok(plaintext);
             }
 
             Err(Error::KeysRequired(1))
         }
-        ThresholdTree::Threshold(thresh) => {
+        IndexedThresholdTree::Threshold { thresh, .. } => {
             let mut shares = Vec::new();
             let mut keys_required = Vec::new();
-            for (i, node) in thresh.iter().enumerate() {
+            for node in thresh.iter() {
                 match decrypt_tree::<T>(
                     node,
                     keys,
@@ -307,7 +306,7 @@ fn decrypt_tree<T: KeyCipher>(
                 ) {
                     Ok(ys) => {
                         let share = Share {
-                            x: (i as u8) + 1,
+                            x: (node.index() as u8) + 1,
                             ys,
                         };
                         shares.push(share);

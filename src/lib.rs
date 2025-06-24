@@ -115,7 +115,7 @@ pub use bitcoin;
 pub use miniscript;
 
 mod payload;
-mod tag;
+pub mod tag;
 mod template;
 
 use anyhow::{Result, anyhow};
@@ -217,7 +217,7 @@ pub fn encrypt_with_options(
         pruned_desc_tree
             .paths()
             .map_err(|_| anyhow!("too many decryption paths"))?
-            .filter_map(|path| tag::tag(&path.leaves()))
+            .filter_map(|path| tag::compute_tag_from_origins(path.leaves()))
             .collect::<Vec<_>>()
     } else {
         Vec::new()
@@ -254,7 +254,7 @@ pub fn decrypt(
             let num_tags = pruned_tree
                 .paths()
                 .map_err(|_| anyhow!("too many decryption paths"))?
-                .filter_map(|path| tag::tag(&path.leaves()))
+                .filter_map(|path| tag::compute_tag_from_origins(path.leaves()))
                 .count();
 
             (pruned_tree.leaves().len(), num_tags)
@@ -359,6 +359,43 @@ fn get_options(data: &[u8]) -> Result<Vec<EncryptOption>> {
     }
 
     Ok(options)
+}
+
+/// Returns four-byte hashes of the master fingerprints of keys that
+/// can be used to decrypt.
+pub fn get_tags(data: &[u8]) -> Result<Vec<tag::Tag>> {
+    // Validate first byte
+    let options = get_options(data)?;
+
+    if !options.contains(&EncryptOption::Tagged) {
+        return Ok(Vec::new());
+    }
+
+    let (template, size) = template::decode(&data[1..])?;
+
+    let num_tags = if let Some(pruned_tree) = template.clone().to_tree().prune_keyless() {
+        pruned_tree
+            .paths()
+            .map_err(|_| anyhow!("too many decryption paths"))?
+            .filter_map(|path| tag::compute_tag_from_origins(path.leaves()))
+            .count()
+    } else {
+        0
+    };
+
+    if size + num_tags * tag::TAG_SIZE > data.len() {
+        return Err(anyhow!("Missing bytes"));
+    }
+
+    let mut tags = Vec::new();
+
+    for i in 0..num_tags {
+        let mut tag = [0u8; tag::TAG_SIZE];
+        tag.copy_from_slice(&data[size + i * tag::TAG_SIZE..size + (i + 1) * tag::TAG_SIZE]);
+        tags.push(tag);
+    }
+
+    Ok(tags)
 }
 
 #[cfg(test)]

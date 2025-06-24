@@ -183,34 +183,12 @@ pub fn encrypt_with_options(
     .concat())
 }
 
-fn version_byte_to_options(version: u8) -> Result<Vec<EncryptOption>> {
-    let mut options = Vec::new();
-    let mut remaining_bits = version;
-
-    for option in [EncryptOption::FullSecrecy] {
-        if version & option as u8 != 0 {
-            options.push(option);
-            remaining_bits ^= option as u8;
-        }
-    }
-
-    if remaining_bits != 0 {
-        return Err(anyhow!("Unsupported version: {:#b}", version));
-    }
-
-    Ok(options)
-}
-
 /// Decrypts an encrypted descriptor using a set of public keys with access to the funds
 pub fn decrypt(
     data: &[u8],
     pks: Vec<DescriptorPublicKey>,
 ) -> Result<Descriptor<DescriptorPublicKey>> {
-    if data.is_empty() {
-        return Err(anyhow!("Empty data"));
-    }
-
-    let options = version_byte_to_options(data[0])?;
+    let options = get_options(data)?;
     let data = &data[1..];
     let share_size = if options.contains(&EncryptOption::FullSecrecy) {
         32_usize
@@ -263,11 +241,8 @@ pub fn decrypt(
 
 /// Returns a template with dummy keys, hashes, and timelocks
 pub fn get_template(data: &[u8]) -> Result<Descriptor<DescriptorPublicKey>> {
-    if data.is_empty() {
-        return Err(anyhow!("Empty data"));
-    }
-
-    version_byte_to_options(data[0])?;
+    // Validate first byte
+    get_options(data)?;
 
     let (template, _) = template::decode(&data[1..])?;
 
@@ -276,11 +251,8 @@ pub fn get_template(data: &[u8]) -> Result<Descriptor<DescriptorPublicKey>> {
 
 /// Returns the origin derivation paths in the descriptor
 pub fn get_origin_derivation_paths(data: &[u8]) -> Result<Vec<DerivationPath>> {
-    if data.is_empty() {
-        return Err(anyhow!("Empty data"));
-    }
-
-    version_byte_to_options(data[0])?;
+    // Validate first byte
+    get_options(data)?;
 
     let (template, _) = template::decode(&data[1..])?;
 
@@ -298,6 +270,29 @@ pub fn get_origin_derivation_paths(data: &[u8]) -> Result<Vec<DerivationPath>> {
     }
 
     Ok(paths)
+}
+
+/// Returns the options used to encrypt the descriptor
+fn get_options(data: &[u8]) -> Result<Vec<EncryptOption>> {
+    if data.is_empty() {
+        return Err(anyhow!("Empty data"));
+    }
+
+    let mut options = Vec::new();
+    let mut remaining_bits = data[0];
+
+    for option in [EncryptOption::FullSecrecy] {
+        if data[0] & option as u8 != 0 {
+            options.push(option);
+            remaining_bits ^= option as u8;
+        }
+    }
+
+    if remaining_bits != 0 {
+        return Err(anyhow!("Unsupported version: {:#b}", data[0]));
+    }
+
+    Ok(options)
 }
 
 #[cfg(test)]

@@ -56,7 +56,7 @@
 //! let encrypted_data = encrypt(descriptor.clone()).unwrap();
 //!
 //! // Encrypt the descriptor with full secrecy (best for privacy but slower when decrypting large descriptors)
-//! let encrypted_data_with_full_secrecy = encrypt(descriptor.clone()).unwrap();
+//! let encrypted_data_with_full_secrecy = encrypt_with_full_secrecy(descriptor.clone()).unwrap();
 //!
 //! // Get a template descriptor with dummy keys, hashes, and timelocks
 //! let template = get_template(&encrypted_data).unwrap();
@@ -115,6 +115,7 @@ pub use bitcoin;
 pub use miniscript;
 
 mod payload;
+mod tag;
 mod template;
 
 use anyhow::{Result, anyhow};
@@ -132,10 +133,16 @@ pub enum EncryptOption {
     ///
     /// Represented by the first bit in the first byte.
     FullSecrecy = 1 << 0,
-    /// Flag to signal no key reuse during decryption
+    /// Ensures no key reuse during decryption
     ///
     /// Represented by the second bit in the first byte.
     NoKeyReuse = 1 << 1,
+    /// Adds a four-byte hash of master fingerprints in each set of keys
+    /// that can decrypt. Makes decryption faster and enables efficient
+    /// lookup.
+    ///
+    /// Represented by the second bit in the first byte.
+    Tagged = 1 << 2,
 }
 
 /// Encrypts a descriptor such that it can only be recovered by a set of
@@ -151,8 +158,17 @@ pub fn encrypt(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
 /// - More private: no information is revealed from partial decryptions
 /// - Slower to decrypt: must try all possible combinations of keys. This is O((N+1)^K),
 ///   where N is the number of keys and K is the number of shares.
+///
+/// Throws an error if a spending path requires key reuse.
 pub fn encrypt_with_full_secrecy(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
-    encrypt_with_options(desc, vec![EncryptOption::FullSecrecy])
+    encrypt_with_options(
+        desc,
+        vec![
+            EncryptOption::FullSecrecy,
+            EncryptOption::NoKeyReuse,
+            EncryptOption::Tagged,
+        ],
+    )
 }
 
 /// Encrypts a descriptor with the specified options.
@@ -161,7 +177,7 @@ pub fn encrypt_with_options(
     mut options: Vec<EncryptOption>,
 ) -> Result<Vec<u8>> {
     let Some(pruned_desc_tree) = desc.to_tree().prune_keyless() else {
-        return Err(anyhow!("Descriptor must require a key"));
+        return Err(anyhow!("descriptor must require a key"));
     };
 
     // Check if distinct keys are used within each path (reuse allowed across paths)
@@ -171,10 +187,10 @@ pub fn encrypt_with_options(
             path.leaves().iter().all(|key| set.insert(key))
         });
 
-        if options.contains(&EncryptOption::NoKeyReuse) {
-            return Err(anyhow!("Descriptor reuses a key"));
-        } else if no_key_reuse {
+        if no_key_reuse {
             options.push(EncryptOption::NoKeyReuse);
+        } else if options.contains(&EncryptOption::NoKeyReuse) {
+            return Err(anyhow!("descriptor reuses a key"));
         }
     }
 
@@ -190,16 +206,27 @@ pub fn encrypt_with_options(
 
     // Encrypt payload and shard encryption key into encrypted shares (1 per key)
     let nonce = [0u8; 12];
-    let (encrypted_shares, encrypted_payload) =
-        if options.contains(&EncryptOption::FullSecrecy) {
-            payload::encrypt_with_full_secrecy(desc, encryption_key.into(), nonce, payload)?
-        } else {
-            payload::encrypt_with_authenticated_shards(desc, encryption_key.into(), nonce, payload)?
-        };
+    let (encrypted_shares, encrypted_payload) = if options.contains(&EncryptOption::FullSecrecy) {
+        payload::encrypt_with_full_secrecy(desc, encryption_key.into(), nonce, payload)?
+    } else {
+        payload::encrypt_with_authenticated_shards(desc, encryption_key.into(), nonce, payload)?
+    };
+
+    // Derive tags for each decryption path
+    let tags = if options.contains(&EncryptOption::Tagged) {
+        pruned_desc_tree
+            .paths()
+            .map_err(|_| anyhow!("too many decryption paths"))?
+            .filter_map(|path| tag::tag(&path.leaves()))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
 
     Ok([
         vec![version_byte],
         template,
+        tags.concat(),
         encrypted_shares.concat(),
         encrypted_payload,
     ]
@@ -221,22 +248,34 @@ pub fn decrypt(
 
     let (template, size) = template::decode(data)?;
 
-    let num_keys = if let Some(pruned_tree) = template.clone().to_tree().prune_keyless() {
-        pruned_tree.leaves().len()
+    let (num_keys, num_tags) = if let Some(pruned_tree) = template.clone().to_tree().prune_keyless()
+    {
+        if options.contains(&EncryptOption::Tagged) {
+            let num_tags = pruned_tree
+                .paths()
+                .map_err(|_| anyhow!("too many decryption paths"))?
+                .filter_map(|path| tag::tag(&path.leaves()))
+                .count();
+
+            (pruned_tree.leaves().len(), num_tags)
+        } else {
+            (pruned_tree.leaves().len(), 0)
+        }
     } else {
-        0
+        (0, 0)
     };
 
-    if size + num_keys * 48 > data.len() {
+    if size + num_tags * tag::TAG_SIZE + num_keys * share_size > data.len() {
         return Err(anyhow!("Missing bytes"));
     }
 
-    let encrypted_shares: Vec<Vec<u8>> = data[size..size + num_keys * share_size]
+    let remaining_data = &data[size + num_tags * tag::TAG_SIZE..];
+    let encrypted_shares: Vec<Vec<u8>> = remaining_data[..num_keys * share_size]
         .chunks_exact(share_size)
         .map(|chunk| chunk.to_vec())
         .collect();
 
-    let encrypted_payload = &data[size + num_keys * share_size..];
+    let encrypted_payload = &remaining_data[num_keys * share_size..];
 
     let nonce = [0u8; 12];
     let payload = if options.contains(&EncryptOption::FullSecrecy) {
@@ -304,7 +343,11 @@ fn get_options(data: &[u8]) -> Result<Vec<EncryptOption>> {
     let mut options = Vec::new();
     let mut remaining_bits = data[0];
 
-    for option in [EncryptOption::FullSecrecy, EncryptOption::NoKeyReuse] {
+    for option in [
+        EncryptOption::FullSecrecy,
+        EncryptOption::NoKeyReuse,
+        EncryptOption::Tagged,
+    ] {
         if data[0] & option as u8 != 0 {
             options.push(option);
             remaining_bits ^= option as u8;
@@ -391,7 +434,7 @@ mod tests {
         // Modify the version byte to an invalid version
         let mut encrypted_data = encrypt(desc.clone()).unwrap();
 
-        for i in 4..0xFF {
+        for i in 8..0xFF {
             encrypted_data[0] = i;
 
             let template_result = get_template(&encrypted_data);

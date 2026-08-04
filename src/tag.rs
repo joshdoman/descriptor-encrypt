@@ -40,10 +40,7 @@ pub fn compute_tag(fps: Vec<Fingerprint>) -> Option<Tag> {
 ///
 /// Return None if no origin master fingerprints exist.
 pub fn compute_tag_from_origins(pks: Vec<DescriptorPublicKey>) -> Option<Tag> {
-    let fps: Vec<Fingerprint> = pks
-        .iter()
-        .filter_map(|pk| origin_master_fingerprint(pk))
-        .collect();
+    let fps: Vec<Fingerprint> = pks.iter().filter_map(origin_master_fingerprint).collect();
 
     compute_tag(fps)
 }

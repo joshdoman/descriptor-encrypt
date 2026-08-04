@@ -207,14 +207,14 @@ impl<T: Clone> IndexedThresholdTreeWithPaths<T> {
     }
 
     /// Get a specific path by index (a pruned satisfying tree)
-    pub fn get_path(&self, i: usize) -> Option<IndexedThresholdTree<T>> {
+    pub fn at_index(&self, i: usize) -> Option<IndexedThresholdTree<T>> {
         if i >= self.num_paths() {
             return None;
         }
         Some(self.generate_path(i))
     }
 
-    /// Private helper function for `get_path`
+    /// Private helper function for `at_index`
     fn generate_path(&self, mut i: usize) -> IndexedThresholdTree<T> {
         match self {
             IndexedThresholdTreeWithPaths::Leaf(value, index) => IndexedThresholdTree::Leaf {
@@ -264,8 +264,8 @@ impl<T: Clone> ThresholdPaths<T> {
     }
 
     /// Get a specific path by index (a pruned satisfying tree)
-    pub fn get_path(&self, i: usize) -> Option<IndexedThresholdTree<T>> {
-        self.tree.get_path(i)
+    pub fn at_index(&self, i: usize) -> Option<IndexedThresholdTree<T>> {
+        self.tree.at_index(i)
     }
 
     /// Convenience method to check if no paths exist
@@ -282,7 +282,7 @@ impl<T: Clone> Iterator for ThresholdPaths<T> {
             return None;
         }
 
-        let result = self.get_path(self.current_index);
+        let result = self.at_index(self.current_index);
         self.current_index += 1;
         result
     }
@@ -449,7 +449,7 @@ mod tests {
         assert_eq!(paths.num_paths(), 41);
 
         // Check path retrieval
-        let path23 = tree.paths().unwrap().get_path(23).unwrap();
+        let path23 = tree.paths().unwrap().at_index(23).unwrap();
         assert_eq!(
             path23,
             ithr(

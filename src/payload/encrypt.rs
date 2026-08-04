@@ -175,7 +175,7 @@ fn build_tree<T: KeyCipher>(
             let xs: Vec<u8> = (1..=thresh.n() as u8).collect();
             let shares = split_secret(&share, thresh.k(), &xs).map_err(|e| anyhow!(e))?;
             let mut shamir_nodes = Vec::new();
-            for (node, share) in thresh.iter().zip(shares.into_iter()) {
+            for (node, share) in thresh.iter().zip(shares) {
                 let tree = build_tree::<T>(node, share.ys, hash, cipher, leaf_index)?;
                 shamir_nodes.push(tree);
             }

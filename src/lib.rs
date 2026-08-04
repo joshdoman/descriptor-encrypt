@@ -163,11 +163,7 @@ pub fn encrypt(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
 pub fn encrypt_with_full_secrecy(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
     encrypt_with_options(
         desc,
-        vec![
-            EncryptOption::FullSecrecy,
-            EncryptOption::NoKeyReuse,
-            EncryptOption::Tagged,
-        ],
+        vec![EncryptOption::FullSecrecy, EncryptOption::NoKeyReuse],
     )
 }
 
@@ -361,7 +357,7 @@ fn get_options(data: &[u8]) -> Result<Vec<EncryptOption>> {
     Ok(options)
 }
 
-/// Returns four-byte hashes of the master fingerprints of keys that
+/// Returns four-byte hashes of the master fingerprints of each set of keys that
 /// can be used to decrypt.
 pub fn get_tags(data: &[u8]) -> Result<Vec<tag::Tag>> {
     // Validate first byte
@@ -373,7 +369,7 @@ pub fn get_tags(data: &[u8]) -> Result<Vec<tag::Tag>> {
 
     let (template, size) = template::decode(&data[1..])?;
 
-    let num_tags = if let Some(pruned_tree) = template.clone().to_tree().prune_keyless() {
+    let num_tags = if let Some(pruned_tree) = template.to_tree().prune_keyless() {
         pruned_tree
             .paths()
             .map_err(|_| anyhow!("too many decryption paths"))?
@@ -387,13 +383,13 @@ pub fn get_tags(data: &[u8]) -> Result<Vec<tag::Tag>> {
         return Err(anyhow!("Missing bytes"));
     }
 
-    let mut tags = Vec::new();
-
-    for i in 0..num_tags {
-        let mut tag = [0u8; tag::TAG_SIZE];
-        tag.copy_from_slice(&data[size + i * tag::TAG_SIZE..size + (i + 1) * tag::TAG_SIZE]);
-        tags.push(tag);
-    }
+    let tags = (0..num_tags)
+        .map(|i| {
+            let mut tag = [0u8; tag::TAG_SIZE];
+            tag.copy_from_slice(&data[size + i * tag::TAG_SIZE..size + (i + 1) * tag::TAG_SIZE]);
+            tag
+        })
+        .collect();
 
     Ok(tags)
 }

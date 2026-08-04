@@ -42,6 +42,7 @@ pub trait KeyCipher {
         &self,
         encrypted_share: Vec<u8>,
         pks: &[Option<&DescriptorPublicKey>],
+        key_index: usize,
         hash: &[u8; 32],
         index: usize,
     ) -> Result<Vec<u8>>;
@@ -92,6 +93,7 @@ impl KeyCipher for AuthenticatedCipher {
         &self,
         encrypted_share: Vec<u8>,
         pks: &[Option<&DescriptorPublicKey>],
+        _key_index: usize,
         hash: &[u8; 32],
         index: usize,
     ) -> Result<Vec<u8>> {
@@ -159,15 +161,16 @@ impl KeyCipher for UnauthenticatedCipher {
         &self,
         encrypted_share: Vec<u8>,
         pks: &[Option<&DescriptorPublicKey>],
+        key_index: usize,
         hash: &[u8; 32],
         index: usize,
     ) -> Result<Vec<u8>> {
-        if index >= pks.len() {
-            return Err(anyhow!("Insufficient keys for index {}", index));
+        if key_index >= pks.len() {
+            return Err(anyhow!("Insufficient keys for index {}", key_index));
         }
 
-        let Some(pk) = pks[index] else {
-            return Err(anyhow!("No key exists at index {}", index));
+        let Some(pk) = pks[key_index] else {
+            return Err(anyhow!("No key exists at index {}", key_index));
         };
 
         let encryption_key = get_encryption_key(pk, hash, index);
@@ -266,7 +269,7 @@ mod tests {
             .encrypt_share(plaintext.clone(), &pk, &hash, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk)], &hash, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk)], 0, &hash, index);
 
         assert_eq!(
             decrypted_plaintext.unwrap(),
@@ -288,7 +291,7 @@ mod tests {
             .encrypt_share(plaintext.clone(), &pk1, &hash, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk2)], &hash, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk2)], 0, &hash, index);
 
         assert!(
             decrypted_plaintext.is_err(),
@@ -309,7 +312,7 @@ mod tests {
             .encrypt_share(plaintext.clone(), &pk, &hash1, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk)], &hash2, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk)], 0, &hash2, index);
 
         assert!(
             decrypted_plaintext.is_err(),
@@ -330,7 +333,7 @@ mod tests {
             .encrypt_share(plaintext.clone(), &pk, &hash, index1)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk)], &hash, index2);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk)], 0, &hash, index2);
 
         assert!(
             decrypted_plaintext.is_err(),
@@ -353,7 +356,7 @@ mod tests {
             .unwrap();
 
         let pks_list = vec![Some(&pk_wrong1), Some(&pk_correct), Some(&pk_wrong2)];
-        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &pks_list, &hash, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &pks_list, 0, &hash, index);
 
         assert_eq!(
             decrypted_plaintext.unwrap(),
@@ -377,7 +380,7 @@ mod tests {
             .unwrap();
 
         let pks_list = vec![Some(&pk_wrong1), Some(&pk_wrong2)];
-        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &pks_list, &hash, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &pks_list, 0, &hash, index);
 
         assert!(
             decrypted_plaintext.is_err(),
@@ -397,7 +400,7 @@ mod tests {
             .encrypt_share(plaintext.clone(), &pk, &hash, index)
             .unwrap();
 
-        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk)], &hash, index);
+        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &[Some(&pk)], 0, &hash, index);
 
         assert_eq!(
             decrypted_plaintext.unwrap(),
@@ -419,7 +422,8 @@ mod tests {
             .unwrap();
 
         let pks_list_empty = Vec::new();
-        let decrypted_plaintext = cipher.decrypt_share(ciphertext, &pks_list_empty, &hash, index);
+        let decrypted_plaintext =
+            cipher.decrypt_share(ciphertext, &pks_list_empty, 0, &hash, index);
 
         assert!(
             decrypted_plaintext.is_err(),
@@ -508,7 +512,7 @@ mod tests {
             .unwrap();
 
         let decrypted_plaintext = cipher
-            .decrypt_share(ciphertext, &[Some(&pk)], &hash, index)
+            .decrypt_share(ciphertext, &[Some(&pk)], index, &hash, index)
             .unwrap();
 
         assert_eq!(
@@ -531,7 +535,7 @@ mod tests {
             .unwrap();
 
         let decrypted_plaintext = cipher
-            .decrypt_share(ciphertext, &[Some(&pk2_dec)], &hash, index)
+            .decrypt_share(ciphertext, &[Some(&pk2_dec)], index, &hash, index)
             .unwrap();
 
         assert_ne!(
@@ -554,7 +558,7 @@ mod tests {
             .unwrap();
 
         let decrypted_plaintext = cipher
-            .decrypt_share(ciphertext, &[Some(&pk)], &hash2_dec, index)
+            .decrypt_share(ciphertext, &[Some(&pk)], index, &hash2_dec, index)
             .unwrap();
 
         assert_ne!(
@@ -583,7 +587,13 @@ mod tests {
         };
 
         let decrypted_plaintext = cipher
-            .decrypt_share(ciphertext, &pks_for_decryption, &hash, index2_dec)
+            .decrypt_share(
+                ciphertext,
+                &pks_for_decryption,
+                index2_dec,
+                &hash,
+                index2_dec,
+            )
             .unwrap();
 
         assert_ne!(
@@ -608,7 +618,7 @@ mod tests {
 
         let pks_list = vec![Some(&pk_other), Some(&pk_correct), Some(&pk_other)];
         let decrypted_plaintext = cipher
-            .decrypt_share(ciphertext, &pks_list, &hash, decrypt_idx)
+            .decrypt_share(ciphertext, &pks_list, decrypt_idx, &hash, decrypt_idx)
             .unwrap();
 
         assert_eq!(
@@ -634,7 +644,7 @@ mod tests {
 
         let pks_list = vec![Some(&pk_decrypt_wrong), Some(&pk_other)];
         let decrypted_plaintext = cipher
-            .decrypt_share(ciphertext, &pks_list, &hash, decrypt_idx)
+            .decrypt_share(ciphertext, &pks_list, decrypt_idx, &hash, decrypt_idx)
             .unwrap();
 
         assert_ne!(
@@ -656,7 +666,7 @@ mod tests {
             .unwrap();
 
         let decrypted_plaintext = cipher
-            .decrypt_share(ciphertext, &[Some(&pk)], &hash, index)
+            .decrypt_share(ciphertext, &[Some(&pk)], index, &hash, index)
             .unwrap();
 
         assert_eq!(
@@ -679,7 +689,7 @@ mod tests {
             .unwrap();
 
         let pks_list_empty: Vec<Option<&DescriptorPublicKey>> = Vec::new();
-        let result = cipher.decrypt_share(ciphertext, &pks_list_empty, &hash, index_dec);
+        let result = cipher.decrypt_share(ciphertext, &pks_list_empty, index_dec, &hash, index_dec);
 
         assert!(
             result.is_err(),
@@ -705,7 +715,7 @@ mod tests {
             .unwrap();
 
         let pks_list = vec![Some(&pk)];
-        let result = cipher.decrypt_share(ciphertext, &pks_list, &hash, index_dec);
+        let result = cipher.decrypt_share(ciphertext, &pks_list, index_dec, &hash, index_dec);
 
         assert!(
             result.is_err(),
@@ -731,7 +741,7 @@ mod tests {
             .unwrap();
 
         let pks_list = vec![None];
-        let result = cipher.decrypt_share(ciphertext, &pks_list, &hash, index_dec);
+        let result = cipher.decrypt_share(ciphertext, &pks_list, index_dec, &hash, index_dec);
 
         assert!(
             result.is_err(),

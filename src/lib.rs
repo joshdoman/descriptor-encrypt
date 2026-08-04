@@ -56,7 +56,7 @@
 //! let encrypted_data = encrypt(descriptor.clone()).unwrap();
 //!
 //! // Encrypt the descriptor with full secrecy (best for privacy but slower when decrypting large descriptors)
-//! let encrypted_data_with_full_secrecy = encrypt(descriptor.clone()).unwrap();
+//! let encrypted_data_with_full_secrecy = encrypt_with_full_secrecy(descriptor.clone()).unwrap();
 //!
 //! // Get a template descriptor with dummy keys, hashes, and timelocks
 //! let template = get_template(&encrypted_data).unwrap();
@@ -115,6 +115,7 @@ pub use bitcoin;
 pub use miniscript;
 
 mod payload;
+pub mod tag;
 mod template;
 
 use anyhow::{Result, anyhow};
@@ -122,14 +123,32 @@ use bitcoin::bip32::DerivationPath;
 use descriptor_tree::ToDescriptorTree;
 use miniscript::{Descriptor, DescriptorPublicKey};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 
-const V0: u8 = 0;
-const V1: u8 = 1;
+/// Options for encryption that can be passed to encrypt_with_options
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EncryptOption {
+    /// Full secrecy: no information is gained about key inclusion unless
+    /// the descriptor can be decrypted.
+    ///
+    /// Represented by the first bit in the first byte.
+    FullSecrecy = 1 << 0,
+    /// Ensures no key reuse during decryption
+    ///
+    /// Represented by the second bit in the first byte.
+    NoKeyReuse = 1 << 1,
+    /// Adds a four-byte hash of master fingerprints in each set of keys
+    /// that can decrypt. Makes decryption faster and enables efficient
+    /// lookup.
+    ///
+    /// Represented by the second bit in the first byte.
+    Tagged = 1 << 2,
+}
 
 /// Encrypts a descriptor such that it can only be recovered by a set of
 /// keys with access to the funds.
 pub fn encrypt(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
-    encrypt_with_version(V0, desc)
+    encrypt_with_options(desc, vec![])
 }
 
 /// Identical to `encrypt` except it provides full secrecy during encryption. as no
@@ -139,11 +158,40 @@ pub fn encrypt(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
 /// - More private: no information is revealed from partial decryptions
 /// - Slower to decrypt: must try all possible combinations of keys. This is O((N+1)^K),
 ///   where N is the number of keys and K is the number of shares.
+///
+/// Throws an error if a spending path requires key reuse.
 pub fn encrypt_with_full_secrecy(desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
-    encrypt_with_version(V1, desc)
+    encrypt_with_options(
+        desc,
+        vec![EncryptOption::FullSecrecy, EncryptOption::NoKeyReuse],
+    )
 }
 
-fn encrypt_with_version(version: u8, desc: Descriptor<DescriptorPublicKey>) -> Result<Vec<u8>> {
+/// Encrypts a descriptor with the specified options.
+pub fn encrypt_with_options(
+    desc: Descriptor<DescriptorPublicKey>,
+    mut options: Vec<EncryptOption>,
+) -> Result<Vec<u8>> {
+    let Some(pruned_desc_tree) = desc.to_tree().prune_keyless() else {
+        return Err(anyhow!("descriptor must require a key"));
+    };
+
+    // Check if distinct keys are used within each path (reuse allowed across paths)
+    if let Ok(mut paths) = pruned_desc_tree.paths() {
+        let no_key_reuse = paths.all(|path| {
+            let mut set = HashSet::new();
+            path.leaves().iter().all(|key| set.insert(key))
+        });
+
+        if no_key_reuse {
+            options.push(EncryptOption::NoKeyReuse);
+        } else if options.contains(&EncryptOption::NoKeyReuse) {
+            return Err(anyhow!("descriptor reuses a key"));
+        }
+    }
+
+    let version_byte = options.iter().fold(0u8, |acc, &option| acc | option as u8);
+
     let (template, payload) = template::encode(desc.clone());
 
     // Deterministically derive encryption key
@@ -154,17 +202,27 @@ fn encrypt_with_version(version: u8, desc: Descriptor<DescriptorPublicKey>) -> R
 
     // Encrypt payload and shard encryption key into encrypted shares (1 per key)
     let nonce = [0u8; 12];
-    let (encrypted_shares, encrypted_payload) = match version {
-        V0 => {
-            payload::encrypt_with_authenticated_shards(desc, encryption_key.into(), nonce, payload)?
-        }
-        V1 => payload::encrypt_with_full_secrecy(desc, encryption_key.into(), nonce, payload)?,
-        _ => return Err(anyhow!("Unsupported version: {}", version)),
+    let (encrypted_shares, encrypted_payload) = if options.contains(&EncryptOption::FullSecrecy) {
+        payload::encrypt_with_full_secrecy(desc, encryption_key.into(), nonce, payload)?
+    } else {
+        payload::encrypt_with_authenticated_shards(desc, encryption_key.into(), nonce, payload)?
+    };
+
+    // Derive tags for each decryption path
+    let tags = if options.contains(&EncryptOption::Tagged) {
+        pruned_desc_tree
+            .paths()
+            .map_err(|_| anyhow!("too many decryption paths"))?
+            .filter_map(|path| tag::compute_tag_from_origins(path.leaves()))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
     };
 
     Ok([
-        vec![version],
+        vec![version_byte],
         template,
+        tags.concat(),
         encrypted_shares.concat(),
         encrypted_payload,
     ]
@@ -176,53 +234,62 @@ pub fn decrypt(
     data: &[u8],
     pks: Vec<DescriptorPublicKey>,
 ) -> Result<Descriptor<DescriptorPublicKey>> {
-    if data.is_empty() {
-        return Err(anyhow!("Empty data"));
-    }
-
-    let version = data[0];
-    let (data, share_size) = match version {
-        V0 => (&data[1..], 48_usize),
-        V1 => (&data[1..], 32_usize),
-        _ => return Err(anyhow!("Unsupported version: {}", version)),
+    let options = get_options(data)?;
+    let data = &data[1..];
+    let share_size = if options.contains(&EncryptOption::FullSecrecy) {
+        32_usize
+    } else {
+        48_usize
     };
 
     let (template, size) = template::decode(data)?;
 
-    let num_keys = if let Some(pruned_tree) = template.clone().to_tree().prune_keyless() {
-        pruned_tree.extract_keys().len()
+    let (num_keys, num_tags) = if let Some(pruned_tree) = template.clone().to_tree().prune_keyless()
+    {
+        if options.contains(&EncryptOption::Tagged) {
+            let num_tags = pruned_tree
+                .paths()
+                .map_err(|_| anyhow!("too many decryption paths"))?
+                .filter_map(|path| tag::compute_tag_from_origins(path.leaves()))
+                .count();
+
+            (pruned_tree.leaves().len(), num_tags)
+        } else {
+            (pruned_tree.leaves().len(), 0)
+        }
     } else {
-        0
+        (0, 0)
     };
 
-    if size + num_keys * 48 > data.len() {
+    if size + num_tags * tag::TAG_SIZE + num_keys * share_size > data.len() {
         return Err(anyhow!("Missing bytes"));
     }
 
-    let encrypted_shares: Vec<Vec<u8>> = data[size..size + num_keys * share_size]
+    let remaining_data = &data[size + num_tags * tag::TAG_SIZE..];
+    let encrypted_shares: Vec<Vec<u8>> = remaining_data[..num_keys * share_size]
         .chunks_exact(share_size)
         .map(|chunk| chunk.to_vec())
         .collect();
 
-    let encrypted_payload = &data[size + num_keys * share_size..];
+    let encrypted_payload = &remaining_data[num_keys * share_size..];
 
     let nonce = [0u8; 12];
-    let payload = match version {
-        V0 => payload::decrypt_with_authenticated_shards(
+    let payload = if options.contains(&EncryptOption::FullSecrecy) {
+        payload::decrypt_with_full_secrecy(
             template.clone(),
             encrypted_shares,
             pks,
             nonce,
             encrypted_payload.to_vec(),
-        )?,
-        V1 => payload::decrypt_with_full_secrecy(
+        )?
+    } else {
+        payload::decrypt_with_authenticated_shards(
             template.clone(),
             encrypted_shares,
             pks,
             nonce,
             encrypted_payload.to_vec(),
-        )?,
-        _ => unreachable!("unsupported version"),
+        )?
     };
 
     let desc = template::decode_with_payload(data, &payload)?;
@@ -232,35 +299,23 @@ pub fn decrypt(
 
 /// Returns a template with dummy keys, hashes, and timelocks
 pub fn get_template(data: &[u8]) -> Result<Descriptor<DescriptorPublicKey>> {
-    if data.is_empty() {
-        return Err(anyhow!("Empty data"));
-    }
+    // Validate first byte
+    get_options(data)?;
 
-    let data = match data[0] {
-        V0 | V1 => &data[1..],
-        _ => return Err(anyhow!("Unsupported version: {}", data[0])),
-    };
-
-    let (template, _) = template::decode(data)?;
+    let (template, _) = template::decode(&data[1..])?;
 
     Ok(template)
 }
 
 /// Returns the origin derivation paths in the descriptor
 pub fn get_origin_derivation_paths(data: &[u8]) -> Result<Vec<DerivationPath>> {
-    if data.is_empty() {
-        return Err(anyhow!("Empty data"));
-    }
+    // Validate first byte
+    get_options(data)?;
 
-    let data = match data[0] {
-        V0 | V1 => &data[1..],
-        _ => return Err(anyhow!("Unsupported version: {}", data[0])),
-    };
-
-    let (template, _) = template::decode(data)?;
+    let (template, _) = template::decode(&data[1..])?;
 
     let mut paths = Vec::new();
-    for key in template.clone().to_tree().extract_keys() {
+    for key in template.clone().to_tree().keys() {
         let origin = match key {
             DescriptorPublicKey::XPub(xpub) => xpub.origin,
             DescriptorPublicKey::MultiXPub(xpub) => xpub.origin,
@@ -273,6 +328,70 @@ pub fn get_origin_derivation_paths(data: &[u8]) -> Result<Vec<DerivationPath>> {
     }
 
     Ok(paths)
+}
+
+/// Returns the options used to encrypt the descriptor
+fn get_options(data: &[u8]) -> Result<Vec<EncryptOption>> {
+    if data.is_empty() {
+        return Err(anyhow!("Empty data"));
+    }
+
+    let mut options = Vec::new();
+    let mut remaining_bits = data[0];
+
+    for option in [
+        EncryptOption::FullSecrecy,
+        EncryptOption::NoKeyReuse,
+        EncryptOption::Tagged,
+    ] {
+        if data[0] & option as u8 != 0 {
+            options.push(option);
+            remaining_bits ^= option as u8;
+        }
+    }
+
+    if remaining_bits != 0 {
+        return Err(anyhow!("Unsupported version: {:#b}", data[0]));
+    }
+
+    Ok(options)
+}
+
+/// Returns four-byte hashes of the master fingerprints of each set of keys that
+/// can be used to decrypt.
+pub fn get_tags(data: &[u8]) -> Result<Vec<tag::Tag>> {
+    // Validate first byte
+    let options = get_options(data)?;
+
+    if !options.contains(&EncryptOption::Tagged) {
+        return Ok(Vec::new());
+    }
+
+    let (template, size) = template::decode(&data[1..])?;
+
+    let num_tags = if let Some(pruned_tree) = template.to_tree().prune_keyless() {
+        pruned_tree
+            .paths()
+            .map_err(|_| anyhow!("too many decryption paths"))?
+            .filter_map(|path| tag::compute_tag_from_origins(path.leaves()))
+            .count()
+    } else {
+        0
+    };
+
+    if size + num_tags * tag::TAG_SIZE > data.len() {
+        return Err(anyhow!("Missing bytes"));
+    }
+
+    let tags = (0..num_tags)
+        .map(|i| {
+            let mut tag = [0u8; tag::TAG_SIZE];
+            tag.copy_from_slice(&data[size + i * tag::TAG_SIZE..size + (i + 1) * tag::TAG_SIZE]);
+            tag
+        })
+        .collect();
+
+    Ok(tags)
 }
 
 #[cfg(test)]
@@ -298,7 +417,7 @@ mod tests {
         for desc_str in descriptors {
             let desc = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
 
-            let keys = desc.clone().to_tree().extract_keys();
+            let keys = desc.clone().to_tree().keys();
             let ciphertext = encrypt(desc.clone()).unwrap();
             assert_eq!(desc, decrypt(&ciphertext, keys.clone()).unwrap());
             assert!(get_template(&ciphertext).is_ok());
@@ -312,6 +431,35 @@ mod tests {
     }
 
     #[test]
+    fn test_no_key_reuse_flag() {
+        // Distinct keys within each path (1-of-3 multisig using 2 distinct keys)
+        let distinct_keys_desc_str = "wsh(multi(1,02d7924d4f7d43ea965a465ae3095ff41131e5946f3c85f79e44adbcf8e27e080e,02d7924d4f7d43ea965a465ae3095ff41131e5946f3c85f79e44adbcf8e27e080e,023e9be8b82c7469c88b1912a61611dffb9f65bbf5a176952727e0046513eca0de))";
+        let distinct_keys_desc =
+            Descriptor::<DescriptorPublicKey>::from_str(distinct_keys_desc_str).unwrap();
+
+        let ciphertext = encrypt(distinct_keys_desc.clone()).unwrap();
+        let options = get_options(&ciphertext).unwrap();
+
+        assert!(
+            options.contains(&EncryptOption::NoKeyReuse),
+            "NoKeyReuse flag should be set when no keys reused within a path"
+        );
+
+        // Reused key within a path (2-of-3 reusing a key)
+        let reused_keys_desc_str = "wsh(multi(2,02d7924d4f7d43ea965a465ae3095ff41131e5946f3c85f79e44adbcf8e27e080e,02d7924d4f7d43ea965a465ae3095ff41131e5946f3c85f79e44adbcf8e27e080e,023e9be8b82c7469c88b1912a61611dffb9f65bbf5a176952727e0046513eca0de))";
+        let reused_keys_desc =
+            Descriptor::<DescriptorPublicKey>::from_str(reused_keys_desc_str).unwrap();
+
+        let ciphertext = encrypt(reused_keys_desc.clone()).unwrap();
+        let options = get_options(&ciphertext).unwrap();
+
+        assert!(
+            !options.contains(&EncryptOption::NoKeyReuse),
+            "NoKeyReuse flag should NOT be set for a descriptor with reused keys in a path"
+        );
+    }
+
+    #[test]
     fn test_unsupported_version() {
         let desc_str = "wpkh(02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9)";
         let desc = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
@@ -319,23 +467,19 @@ mod tests {
         // Modify the version byte to an invalid version
         let mut encrypted_data = encrypt(desc.clone()).unwrap();
 
-        for i in 2..0xFF {
+        for i in 8..0xFF {
             encrypted_data[0] = i;
 
             let template_result = get_template(&encrypted_data);
-            assert!(
-                template_result
-                    .unwrap_err()
-                    .to_string()
-                    .contains(&format!("Unsupported version: {}", i))
+            assert_eq!(
+                template_result.unwrap_err().to_string(),
+                format!("Unsupported version: {:#b}", i)
             );
 
             let paths_result = get_origin_derivation_paths(&encrypted_data);
-            assert!(
-                paths_result
-                    .unwrap_err()
-                    .to_string()
-                    .contains(&format!("Unsupported version: {}", i))
+            assert_eq!(
+                paths_result.unwrap_err().to_string(),
+                format!("Unsupported version: {:#b}", i)
             );
 
             let key = DescriptorPublicKey::from_str(
@@ -344,11 +488,9 @@ mod tests {
             .unwrap();
 
             let decrypt_result = decrypt(&encrypted_data, vec![key]);
-            assert!(
-                decrypt_result
-                    .unwrap_err()
-                    .to_string()
-                    .contains(&format!("Unsupported version: {}", i))
+            assert_eq!(
+                decrypt_result.unwrap_err().to_string(),
+                format!("Unsupported version: {:#b}", i)
             );
         }
     }

@@ -25,7 +25,9 @@ rust-version = "1.85.0"
 
 [workspace.dependencies]
 bitcoin = "0.32.5"
+itertools = "0.14.0"
 miniscript = "12.3.2"
+threshold-tree = { version = "0.1.0", path = "crates/threshold-tree" }
 
 [features]
 default = ["std"]
@@ -41,8 +43,9 @@ chacha20poly1305 = "0.10.1"
 descriptor-tree = { version = "0.1.0", path = "crates/descriptor-tree" }
 miniscript.workspace = true
 sha2 = "0.10.9"
+threshold-tree.workspace = true
 clap = { version = "4.4", features = ["derive"] }
-itertools = "0.14.0"
+itertools.workspace = true
 hex = "0.4.3"
 
 [dev-dependencies]

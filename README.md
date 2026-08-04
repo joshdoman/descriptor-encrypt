@@ -43,7 +43,7 @@ let descriptor = Descriptor::<DescriptorPublicKey>::from_str(desc_str).unwrap();
 let encrypted_data = encrypt(descriptor.clone()).unwrap();
 
 // Encrypt the descriptor with full secrecy (best for privacy but slower when decrypting large descriptors)
-let encrypted_data_with_full_secrecy = encrypt(descriptor.clone()).unwrap();
+let encrypted_data_with_full_secrecy = encrypt_with_full_secrecy(descriptor.clone()).unwrap();
 
 // Get a template descriptor with dummy keys, hashes, and timelocks
 let template = get_template(&encrypted_data).unwrap();

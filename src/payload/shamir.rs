@@ -441,7 +441,7 @@ mod tests {
             "k=0"
         );
         assert!(
-            reconstruct_secret(&[share1.clone()], 2).is_err(),
+            reconstruct_secret(std::slice::from_ref(&share1), 2).is_err(),
             "not enough shares"
         );
         assert!(reconstruct_secret(&[], 1).is_err(), "empty shares list");
